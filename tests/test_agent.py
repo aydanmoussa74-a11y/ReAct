@@ -53,7 +53,7 @@ def test_self_heal_limit():
         _chunk(done=True),
     )
     client.chat.side_effect = lambda *a, **k: fail_chunk
-    with patch("react.agent.ollama.Client", return_value=client):
+    with patch("react.agent.ollama.Client", return_value=client), patch("react.agent.Prompt.ask", return_value="y"):
         agent = Agent("llama3.2")
         agent.run("run false", use_native=True)
         system_msgs = [
@@ -83,3 +83,31 @@ def test_model_manager_local_list():
     models = get_local_models()
     assert isinstance(models, list)
     assert len(RECOMMENDED_MODELS) >= 3
+
+
+
+def test_native_mode_receives_investigation_system_prompt():
+    client = MagicMock()
+    client.chat.side_effect = [
+        _stream(_chunk(content="I will inspect the project."), _chunk(done=True)),
+    ]
+    with patch("react.agent.ollama.Client", return_value=client):
+        agent = Agent("llama3.2")
+        agent.run("inspect first", use_native=True)
+    messages = client.chat.call_args.kwargs["messages"]
+    assert messages[0]["role"] == "system"
+    assert "Codebase investigation protocol" in messages[0]["content"]
+    assert "do not emit JSON tool calls as plain text" in messages[0]["content"]
+
+
+def test_fallback_system_prompt_does_not_accumulate():
+    client = MagicMock()
+    client.chat.side_effect = [
+        _stream(_chunk(content="DONE: first"), _chunk(done=True)),
+        _stream(_chunk(content="DONE: second"), _chunk(done=True)),
+    ]
+    with patch("react.agent.ollama.Client", return_value=client):
+        agent = Agent("llama3.2")
+        agent.run("first", use_native=False)
+        agent.run("second", use_native=False)
+    assert sum(1 for m in agent.messages if m.get("role") == "system") == 1

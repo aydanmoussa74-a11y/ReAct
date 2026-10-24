@@ -25,6 +25,7 @@ def workspace(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     utils_mod._WORKSPACE_ROOT = tmp_path
     tools_mod._WORKSPACE_ROOT = tmp_path
+    utils_mod.SNAPSHOT_ROOT = tmp_path / ".react" / "snapshots"
     yield tmp_path
 
 
@@ -63,8 +64,8 @@ def test_run_command_ok(workspace):
 
 
 def test_run_command_blocked(workspace):
-    assert "Dangerous command blocked" in run_command("rm -rf /")
-    assert "Dangerous command blocked" in run_command("sudo ls")
+    assert "blocked by safety policy" in run_command("rm -rf /")
+    assert "blocked by safety policy" in run_command("sudo ls")
 
 
 def test_run_command_failure(workspace):
@@ -79,3 +80,34 @@ def test_tool_definitions_schema():
     for td in TOOL_DEFINITIONS:
         assert "parameters" in td["function"]
         assert "required" in td["function"]["parameters"]
+
+
+
+def test_undo_removes_new_nested_file(workspace):
+    assert write_file("src/new_file.py", "print('new')").startswith("[ok]")
+    assert (workspace / "src" / "new_file.py").exists()
+    assert undo().startswith("[ok]")
+    assert not (workspace / "src" / "new_file.py").exists()
+
+
+def test_diff_rejects_mismatched_context_without_changing_file(workspace):
+    (workspace / "demo.txt").write_text("hello\\nworld\\n")
+    result = edit_file("demo.txt", """--- a/demo.txt
++++ b/demo.txt
+@@ -1,2 +1,2 @@
+-goodbye
++hi
+ world
+""")
+    assert result.startswith("[error]")
+    assert (workspace / "demo.txt").read_text() == "hello\\nworld\\n"
+
+
+def test_search_empty_query_is_rejected(workspace):
+    assert search_code("").startswith("[error]")
+
+
+def test_run_command_does_not_interpret_shell_chaining(workspace):
+    out = run_command("echo safe; touch should_not_exist")
+    assert "Exit Code: 0" in out
+    assert not (workspace / "should_not_exist").exists()

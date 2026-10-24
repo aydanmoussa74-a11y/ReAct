@@ -39,55 +39,87 @@ def snapshot(path: Path) -> None:
     ts = datetime.now().strftime("%Y%m%d-%H%M%S-%f")
     snap_dir = SNAPSHOT_ROOT / ts
     snap_dir.mkdir()
-    rel = path.relative_to(_WORKSPACE_ROOT) if path.exists() else Path(path.name)
+    # Keep the complete workspace-relative path even when the file is new.
+    rel = path.relative_to(_WORKSPACE_ROOT)
     dest = snap_dir / rel
     dest.parent.mkdir(parents=True, exist_ok=True)
     if path.exists():
         shutil.copy2(path, dest)
     else:
-        dest.write_text("", encoding="utf-8")
+        (snap_dir / ".react-created").write_text("1", encoding="utf-8")
     (snap_dir / ".react-path").write_text(str(rel), encoding="utf-8")
 
 
 def apply_unified_diff(original: str, diff: str) -> str | None:
-    """Best-effort unified-diff applicator. Returns new content or None on failure."""
-    lines = original.splitlines(keepends=True)
-    diff_lines = diff.splitlines(keepends=True)
-    i = 0
+    """Apply a unified diff only when every hunk matches the source exactly."""
+    import re
+
+    source = original.splitlines(keepends=True)
+    patch = diff.splitlines(keepends=True)
+    hunk_re = re.compile(r"^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@")
     result: list[str] = []
     src_idx = 0
-    while i < len(diff_lines):
-        line = diff_lines[i]
-        if line.startswith("@@"):
-            try:
-                header = line.split("@@")[1].strip().split()
-                start = int(header[0].split(",")[0].lstrip("-"))
-            except (IndexError, ValueError):
-                return None
-            while src_idx < start - 1 and src_idx < len(lines):
-                result.append(lines[src_idx])
-                src_idx += 1
+    i = 0
+    saw_hunk = False
+
+    while i < len(patch):
+        line = patch[i]
+        if line.startswith("--- ") or line.startswith("+++ "):
             i += 1
-            while i < len(diff_lines) and not diff_lines[i].startswith("@@") and not diff_lines[i].startswith("---"):
-                dline = diff_lines[i]
-                if dline.startswith("+") and not dline.startswith("+++"):
-                    result.append(dline[1:])
-                elif dline.startswith("-") and not dline.startswith("---"):
-                    src_idx += 1
-                elif dline.startswith(" "):
-                    if src_idx < len(lines):
-                        result.append(lines[src_idx])
-                        src_idx += 1
-                    else:
-                        result.append(dline[1:])
-                else:
-                    if src_idx < len(lines):
-                        result.append(lines[src_idx])
-                        src_idx += 1
-                i += 1
             continue
+        if not line.startswith("@@"):
+            # Permit blank lines outside hunks, but reject arbitrary patch text.
+            if line.strip():
+                return None
+            i += 1
+            continue
+
+        match = hunk_re.match(line.rstrip("\r\n"))
+        if not match:
+            return None
+        saw_hunk = True
+        old_start = int(match.group(1))
+        old_count = int(match.group(2) or 1)
+        new_count = int(match.group(4) or 1)
+        target = max(old_start - 1, 0)
+        if target < src_idx or target > len(source):
+            return None
+        result.extend(source[src_idx:target])
+        src_idx = target
         i += 1
-    while src_idx < len(lines):
-        result.append(lines[src_idx])
-        src_idx += 1
+        old_seen = 0
+        new_seen = 0
+
+        while i < len(patch) and not patch[i].startswith("@@"):
+            item = patch[i]
+            if item.startswith("\\ No newline at end of file"):
+                i += 1
+                continue
+            if not item:
+                return None
+            marker, body = item[0], item[1:]
+            if marker == " ":
+                if src_idx >= len(source) or source[src_idx] != body:
+                    return None
+                result.append(source[src_idx])
+                src_idx += 1
+                old_seen += 1
+                new_seen += 1
+            elif marker == "-":
+                if src_idx >= len(source) or source[src_idx] != body:
+                    return None
+                src_idx += 1
+                old_seen += 1
+            elif marker == "+":
+                result.append(body)
+                new_seen += 1
+            else:
+                return None
+            i += 1
+        if old_seen != old_count or new_seen != new_count:
+            return None
+
+    if not saw_hunk:
+        return None
+    result.extend(source[src_idx:])
     return "".join(result)

@@ -38,6 +38,18 @@ _FALLBACK_SYSTEM = (
     "The repo map is only an index. Do not edit code solely from the map. If evidence is insufficient, investigate further or state the uncertainty."
 )
 
+# Native tool mode uses the same investigation and verification protocol without
+# instructing the model to emit JSON tool calls as plain text.
+_NATIVE_SYSTEM = _FALLBACK_SYSTEM.replace(
+    'Output one of:\n'
+    '  {"tool": "name", "args": {"arg": "value"}}  — then STOP\n'
+    '  DONE: <final answer>\n'
+    'Tools: get_repo_map, read_file, search_code, write_file, edit_file, undo, run_command. '
+    'One call per turn.\n\n',
+    'Use the native tool-calling interface when a tool is needed; do not emit JSON tool calls as plain text.\n'
+    'Tools: get_repo_map, read_file, search_code, write_file, edit_file, undo, run_command.\n\n',
+)
+
 
 class Agent:
     def __init__(self, model: str) -> None:
@@ -54,9 +66,12 @@ class Agent:
                 f"{len(self.files_modified)} modified[/dim]")
 
     def run(self, prompt: str, use_native: bool) -> None:
+        system_prompt = _NATIVE_SYSTEM if use_native else _FALLBACK_SYSTEM
+        if self.messages and self.messages[0].get("role") == "system":
+            self.messages[0]["content"] = system_prompt
+        else:
+            self.messages.insert(0, {"role": "system", "content": system_prompt})
         self.messages.append({"role": "user", "content": prompt})
-        if not use_native:
-            self.messages.insert(0, {"role": "system", "content": _FALLBACK_SYSTEM})
 
         for _ in range(1, MAX_ITERATIONS + 1):
             calls = self._chat(use_native)
@@ -153,6 +168,25 @@ class Agent:
                 continue
         return calls
 
+    def _confirm_command(self, args: dict) -> bool:
+        cmd = str(args.get("cmd", "")).strip()
+        console.print(Panel(
+            f"[yellow]{cmd or '(empty command)'}[/yellow]\n"
+            "Commands run with shell interpretation disabled, but can still modify files or execute programs.",
+            title="Confirm command execution",
+            border_style="yellow",
+        ))
+        choice = Prompt.ask(
+            "[bold]Run this command?[/bold]",
+            choices=["y", "n"],
+            default="n",
+            show_choices=True,
+        )
+        if choice != "y":
+            console.print("[dim]Command skipped.[/dim]")
+            return False
+        return True
+
     def _confirm_write(self, name: str, args: dict) -> bool:
         path = args.get("path", "")
         if name == "write_file":
@@ -203,6 +237,9 @@ class Agent:
             if not self._confirm_write(name, args):
                 self.messages.append({"role": "tool", "content": "[skipped] User declined the change."})
                 return
+        if name == "run_command" and not self._confirm_command(args):
+            self.messages.append({"role": "tool", "content": "[skipped] User declined command execution."})
+            return
 
         if name == "run_command":
             cmd = args.get("cmd", "")

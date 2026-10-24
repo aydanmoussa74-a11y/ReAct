@@ -252,7 +252,8 @@ def _repl(agent: Agent, use_native: bool) -> None:
                 break
             continue
         try:
-            agent.run(line, use_native=use_native)
+            # Re-detect capabilities after /model switches the active model.
+            agent.run(line, use_native=_model_supports_tools(agent.model))
         except KeyboardInterrupt:
             console.print("\n[yellow]Generation cancelled.[/yellow]")
             continue

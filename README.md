@@ -162,3 +162,39 @@ pytest tests/
 |---------|---------|-------------|
 | `MAX_ITERATIONS` | 20 | Hard stop for the agent loop |
 | `MAX_READ_BYTES` | 50 KB | Truncation limit for `read_file` |
+
+
+## Testing from Android (Termux + Acode)
+
+Acode is useful for editing and browsing the source; run Python commands in Termux.
+
+1. Install Git and Python in Termux:
+
+   ```sh
+   pkg update
+   pkg install git python
+   ```
+
+2. Clone and enter the repository:
+
+   ```sh
+   git clone https://github.com/aydanmoussa74-a11y/ReAct.git
+   cd ReAct
+   ```
+
+3. Install the project and test dependencies:
+
+   ```sh
+   python -m pip install -e ".[dev]"
+   python -m pytest -q
+   ```
+
+4. Check the CLI interface:
+
+   ```sh
+   react --help
+   ```
+
+The test suite does not need an Ollama server. To use ReAct as an AI coding agent, a compatible Ollama server must also be running and reachable. Ollama is not installed by installing this Python package. On Android, first verify that you have a supported Ollama runtime available; otherwise use a trusted computer on your local network and configure the client to reach it. Do not expose an unauthenticated Ollama endpoint to the public internet.
+
+Command execution is deliberately confirmed in the interactive agent. Commands run without shell interpretation, high-risk executables are blocked, and command output is capped; this is a safety improvement, not a complete operating-system sandbox.

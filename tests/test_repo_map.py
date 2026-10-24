@@ -77,7 +77,7 @@ def test_file_limit_warning(workspace, monkeypatch):
     for i in range(501):
         (workspace / f"f{i}.txt").write_text("x")
     result = generate_repo_map(workspace)
-    assert result.startswith("[warning] Repo is too large")
+    assert result.startswith("[warning] Repo contains more than")
     assert "search_code" in result
 
 

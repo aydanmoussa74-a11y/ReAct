@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import os
 import shutil
+import shlex
 import subprocess
 from pathlib import Path
 
@@ -17,13 +19,15 @@ from .utils import (
 )
 
 MAX_READ_BYTES = 50 * 1024
+MAX_SEARCH_MATCHES = 200
+MAX_SEARCH_FILES = 5_000
+MAX_SEARCH_FILE_BYTES = 1 * 1024 * 1024
+MAX_COMMAND_OUTPUT_CHARS = 20_000
 
-DANGEROUS_PREFIXES = (
-    "rm -rf", "rm -fr", "sudo ", "sudo\t", "dd ", "mkfs", ":> ",
-    ": >", "shutdown", "reboot", "halt", "poweroff",
-    "chmod 777", "chown ", "mkfs.", "fdisk", "parted",
-    "wget ", "curl ",
-)
+DANGEROUS_COMMANDS = {
+    "rm", "sudo", "su", "dd", "mkfs", "mkfs.ext4", "fdisk", "parted",
+    "shutdown", "reboot", "halt", "poweroff", "chmod", "chown", "curl", "wget",
+}
 
 
 def read_file(path: str) -> str:
@@ -51,23 +55,55 @@ _SKIP_DIRS = {"venv", "__pycache__", ".git", ".venv", "node_modules", "dist", "b
 
 
 def search_code(query: str) -> str:
+    """Search source files with strict traversal, file-size, and result limits."""
+    if not query:
+        return "[error] Search query cannot be empty."
     matches: list[str] = []
-    for src_file in sorted(_WORKSPACE_ROOT.rglob("*")):
-        if not src_file.is_file():
-            continue
-        if src_file.suffix.lower() not in SEARCH_EXTENSIONS:
-            continue
-        if any(part in _SKIP_DIRS or part.startswith(".") for part in src_file.parts):
-            continue
-        try:
-            text = src_file.read_text(encoding="utf-8")
-        except (UnicodeDecodeError, OSError):
-            continue
-        for lineno, line in enumerate(text.splitlines(), start=1):
-            if query in line:
+    files_seen = 0
+    truncated = False
+    for root, dirs, filenames in os.walk(_WORKSPACE_ROOT, topdown=True, followlinks=False):
+        root_path = Path(root)
+        dirs[:] = sorted(
+            d for d in dirs
+            if d not in _SKIP_DIRS and not d.startswith(".")
+            and not (root_path / d).is_symlink()
+        )
+        for filename in sorted(filenames):
+            src_file = root_path / filename
+            try:
                 rel = src_file.relative_to(_WORKSPACE_ROOT)
-                matches.append(f"{rel}:{lineno}: {line.rstrip()}")
-    return "\n".join(matches) if matches else f"No matches for '{query}' in source files."
+            except ValueError:
+                continue
+            if any(part in _SKIP_DIRS or part.startswith(".") for part in rel.parts):
+                continue
+            if src_file.suffix.lower() not in SEARCH_EXTENSIONS:
+                continue
+            files_seen += 1
+            if files_seen > MAX_SEARCH_FILES:
+                truncated = True
+                break
+            try:
+                if src_file.stat().st_size > MAX_SEARCH_FILE_BYTES:
+                    continue
+                text = src_file.read_text(encoding="utf-8")
+            except (UnicodeDecodeError, OSError):
+                continue
+            for lineno, line in enumerate(text.splitlines(), start=1):
+                if query in line:
+                    matches.append(f"{rel}:{lineno}: {line.rstrip()}")
+                    if len(matches) >= MAX_SEARCH_MATCHES:
+                        truncated = True
+                        break
+            if truncated:
+                break
+        if truncated:
+            break
+    if not matches:
+        return f"No matches for '{query}' in source files."
+    output = "\n".join(matches)
+    if truncated:
+        output += f"\n[truncated: search limits reached; showing at most {MAX_SEARCH_MATCHES} matches]"
+    return output
 
 
 def write_file(path: str, content: str) -> str:
@@ -114,16 +150,20 @@ def undo() -> str:
         return "[error] Snapshot is missing path metadata."
     rel = path_file.read_text(encoding="utf-8").strip()
     dest = _WORKSPACE_ROOT / rel
+    created_marker = latest / ".react-created"
+    if created_marker.exists():
+        try:
+            if dest.exists():
+                dest.unlink()
+            return f"[ok] Removed newly created file {rel} (undo)"
+        except OSError as exc:
+            return f"[error] undo failed: {exc}"
     candidates = list(latest.rglob("*"))
-    src = next((p for p in candidates if p.is_file() and p.name != ".react-path"), None)
+    src = next((p for p in candidates if p.is_file() and p.name not in {".react-path", ".react-created"}), None)
     if src is None:
         return "[error] Snapshot contains no file."
     try:
         dest.parent.mkdir(parents=True, exist_ok=True)
-        if src.stat().st_size == 0 and not dest.exists():
-            if dest.exists():
-                dest.unlink()
-            return f"[ok] Removed newly created file {rel} (undo)"
         shutil.copy2(src, dest)
         return f"[ok] Restored {rel} from snapshot {latest.name}"
     except OSError as exc:
@@ -131,15 +171,20 @@ def undo() -> str:
 
 
 def run_command(cmd: str) -> str:
-    """Run a shell command in the working directory with a 30s timeout."""
-    stripped = cmd.strip()
-    for bad in DANGEROUS_PREFIXES:
-        if stripped.startswith(bad) or f" {bad}" in stripped or stripped.startswith(bad.strip()):
-            return "[error] Dangerous command blocked."
+    """Run one explicitly tokenized command (no shell interpretation), with a timeout."""
+    try:
+        argv = shlex.split(cmd)
+    except ValueError as exc:
+        return f"[error] Invalid command syntax: {exc}"
+    if not argv:
+        return "[error] Command cannot be empty."
+    executable = Path(argv[0]).name.lower()
+    if executable in DANGEROUS_COMMANDS:
+        return f"[error] Command blocked by safety policy: {executable}"
     try:
         proc = subprocess.run(
-            stripped,
-            shell=True,
+            argv,
+            shell=False,
             capture_output=True,
             text=True,
             timeout=30,
@@ -147,13 +192,18 @@ def run_command(cmd: str) -> str:
         )
         out = proc.stdout or ""
         err = proc.stderr or ""
-        return (
+        combined = (
             f"Exit Code: {proc.returncode}\n"
             f"STDOUT:\n{out}\n"
             f"STDERR:\n{err}"
         )
+        if len(combined) > MAX_COMMAND_OUTPUT_CHARS:
+            combined = combined[:MAX_COMMAND_OUTPUT_CHARS] + "\n[truncated: command output limit reached]"
+        return combined
     except subprocess.TimeoutExpired:
         return "[error] Command timed out after 30 seconds."
+    except FileNotFoundError:
+        return f"[error] Executable not found: {argv[0]}"
     except Exception as exc:
         return f"[error] run_command failed: {exc}"
 
@@ -206,7 +256,7 @@ TOOL_DEFINITIONS = [
     }},
     {"type": "function", "function": {
         "name": "run_command",
-        "description": "Run a shell command in the working directory (30s timeout). Dangerous commands are blocked.",
+        "description": "Run one command without shell interpretation (30s timeout); dangerous executables are blocked and user confirmation is required.",
         "parameters": {"type": "object", "required": ["cmd"],
                        "properties": {"cmd": {"type": "string"}}},
     }},
