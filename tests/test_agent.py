@@ -61,3 +61,17 @@ def test_self_heal_limit():
             if m.get("role") == "system" and "command failed" in m.get("content", "").lower()
         ]
         assert len(system_msgs) <= 2
+
+
+def test_slash_exit_and_clear():
+    """Slash commands should be handled without calling the LLM."""
+    from react.cli import _handle_slash
+    from react.agent import Agent
+    agent = Agent("test")
+    agent.messages.append({"role": "user", "content": "hi"})
+    agent.files_in_context.add("a.py")
+    assert _handle_slash("/clear", agent) is False
+    assert agent.messages == []
+    assert len(agent.files_in_context) == 0
+    assert _handle_slash("/exit", agent) is True
+    assert _handle_slash("/quit", agent) is True
