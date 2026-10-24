@@ -7,6 +7,7 @@ import subprocess
 from pathlib import Path
 
 from .repo_map import generate_repo_map
+from .mcp_client import get_mcp_tools, call_mcp_tool
 from .utils import (
     _WORKSPACE_ROOT,
     check_write_safety,
@@ -223,6 +224,10 @@ _TOOL_CALLABLES = {
 
 
 def execute_tool(name: str, args: dict) -> str:
+    # MCP tools take priority if loaded
+    for tool in get_mcp_tools():
+        if tool["function"]["name"] == name:
+            return call_mcp_tool(name, args)
     fn = _TOOL_CALLABLES.get(name)
     if fn is None:
         return f"[error] Unknown tool: {name}"
