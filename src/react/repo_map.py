@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import ast
+import os
 from pathlib import Path
 
 _IGNORE_DIRS = {
@@ -22,46 +23,49 @@ def generate_repo_map(workspace: Path) -> str:
     entries: list[tuple[Path, int | None, list[str]]] = []
     count = 0
 
-    for path in sorted(workspace.rglob("*")):
-        if not path.is_file():
-            continue
-        # Skip hidden and ignored directories
-        try:
-            rel = path.relative_to(workspace)
-        except ValueError:
-            continue
-        if any(part.startswith(".") or part in _IGNORE_DIRS for part in rel.parts):
-            continue
-        # Skip symlinks that escape the workspace
-        if path.is_symlink():
+    for root, dirs, files in os.walk(workspace, topdown=True, followlinks=False):
+        root_path = Path(root)
+        # Prune ignored directories before descending into them.
+        dirs[:] = sorted(
+            d for d in dirs
+            if not d.startswith(".") and d not in _IGNORE_DIRS
+            and not (root_path / d).is_symlink()
+        )
+        for filename in sorted(files):
+            path = root_path / filename
             try:
-                path.resolve().relative_to(workspace)
+                rel = path.relative_to(workspace)
             except ValueError:
                 continue
+            if any(part.startswith(".") or part in _IGNORE_DIRS for part in rel.parts):
+                continue
+            if path.is_symlink():
+                try:
+                    path.resolve().relative_to(workspace)
+                except ValueError:
+                    continue
 
-        count += 1
-        if count > _MAX_FILES:
-            return f"[warning] Repo is too large ({count} files). Please use search_code instead."
+            count += 1
+            if count > _MAX_FILES:
+                return f"[warning] Repo contains more than {_MAX_FILES} eligible files. Use search_code to investigate specific areas."
 
-        line_count: int | None = None
-        symbols: list[str] = []
-        if path.suffix == ".py":
-            try:
-                text = path.read_text(encoding="utf-8", errors="replace")
-                line_count = text.count("\n") + (1 if text and not text.endswith("\n") else 0)
-                tree = ast.parse(text)
-                for node in tree.body:
-                    if isinstance(node, ast.ClassDef):
-                        symbols.append(f"class {node.name}")
-                    elif isinstance(node, ast.FunctionDef):
-                        symbols.append(f"def {node.name}")
-                    elif isinstance(node, ast.AsyncFunctionDef):
-                        symbols.append(f"async def {node.name}")
-            except (SyntaxError, OSError, UnicodeDecodeError):
-                # Still list the file; just omit structure
-                pass
-
-        entries.append((rel, line_count, symbols))
+            line_count: int | None = None
+            symbols: list[str] = []
+            if path.suffix == ".py":
+                try:
+                    text = path.read_text(encoding="utf-8", errors="replace")
+                    line_count = text.count("\\n") + (1 if text and not text.endswith("\\n") else 0)
+                    tree = ast.parse(text)
+                    for node in tree.body:
+                        if isinstance(node, ast.ClassDef):
+                            symbols.append(f"class {node.name}")
+                        elif isinstance(node, ast.FunctionDef):
+                            symbols.append(f"def {node.name}")
+                        elif isinstance(node, ast.AsyncFunctionDef):
+                            symbols.append(f"async def {node.name}")
+                except (SyntaxError, OSError, UnicodeDecodeError):
+                    pass
+            entries.append((rel, line_count, symbols))
 
     if not entries:
         return "(empty workspace)"
