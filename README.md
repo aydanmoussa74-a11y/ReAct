@@ -68,12 +68,24 @@ If it is not local, ReAct asks whether to download it, then switches after a suc
 
 | Tool | Description |
 |------|-------------|
+| `get_repo_map` | Structural map of the project (filtered paths + Python class/function names) |
 | `read_file` | Read a file (50 KB truncation) |
 | `search_code` | Substring search across source files |
 | `write_file` | Overwrite a file (confirmation required) |
 | `edit_file` | Apply a unified diff (confirmation required) |
 | `undo` | Restore the most recent snapshot |
 | `run_command` | Run a shell command (30 s timeout, dangerous prefixes blocked) |
+
+### Repo Map
+
+`get_repo_map` returns a compact, deterministic tree of the current workspace:
+
+- Hidden paths and common build/cache directories are ignored (`__pycache__`, `node_modules`, `.venv`, `dist`, `build`, etc.).
+- Python files include top-level class and function names (extracted with the standard `ast` module) and optional line counts.
+- Non-Python files are listed by path only.
+- Hard limit of 500 files; larger repositories return a warning and suggest using `search_code`.
+
+The map is only an index. The agent is instructed to follow Map → Investigate → Read → Trace → Plan → Change → Verify: call the map first on unfamiliar codebases, then use `search_code` and `read_file` to inspect the actual source before proposing or applying changes. Verification uses `run_command`. The map does not guarantee correctness or eliminate the need to read code.
 
 ### Safety
 
