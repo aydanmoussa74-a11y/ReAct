@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import re
 
+from .ollama_compat import ollama
 from .providers import get_client
 import typer
 from rich.console import Console
@@ -55,7 +56,9 @@ class Agent:
     def __init__(self, model: str, provider: str = "ollama") -> None:
         self.model = model
         self.provider = provider
-        self.client = get_client(provider)
+        # Keep the Ollama client exposed here for backwards-compatible tests
+        # and callers that patch react.agent.ollama.Client.
+        self.client = ollama.Client() if provider == "ollama" else get_client(provider)
         self.messages: list[dict] = []
         self.files_in_context: set[str] = set()
         self.files_modified: set[str] = set()
