@@ -53,7 +53,7 @@ def test_self_heal_limit():
         _chunk(done=True),
     )
     client.chat.side_effect = lambda *a, **k: fail_chunk
-    with patch("react.agent.ollama.Client", return_value=client):
+    with patch("react.agent.ollama.Client", return_value=client), patch("react.agent.Prompt.ask", return_value="y"):
         agent = Agent("llama3.2")
         agent.run("run false", use_native=True)
         system_msgs = [
