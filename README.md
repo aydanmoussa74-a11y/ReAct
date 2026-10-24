@@ -1,117 +1,73 @@
-# ReAct — Phase 1 + Phase 2
+# ReAct
 
-ReAct is a local-first AI coding agent CLI.
+Local-first AI coding agent that runs against Ollama.
 
-**Phase 1**: read-only tools (`read_file`, `search_code`) + tool-calling loop.  
-**Phase 2**: write tools (`write_file`, `edit_file`) with human confirmation, snapshots, and `undo`.  
-**Phase 3**: `run_command` with self-healing on failure.
+It can read files, search code, write or edit files (with confirmation), run shell commands, and automatically try to fix failures.
 
-## Prerequisites
-
-1. **Python 3.10+**
-2. **Ollama** — `ollama serve` then `ollama pull llama3.2` (or any model with tool support)
-3. Dependencies:
-
-   ```bash
-   pip install -r requirements.txt
-   ```
-
-## Quick Start
+## Install
 
 ```bash
-# Phase 1 style — read and search
-python main.py "read main.py and explain the Agent class"
-
-# Phase 2 — the agent can propose writes (you confirm)
-python main.py "create a file called notes.md with a short summary of this project"
-
-# Allow writes to dotfiles (use carefully)
-python main.py "update .env with a new key" --dangerously-allow-dotfiles
-
-# Run tests
-python test_phase1.py
-python test_phase2.py
+pip install -r requirements.txt
 ```
+
+Requires Python 3.10+ and a running Ollama instance (`ollama serve`).
+
+## Usage
+
+```bash
+# From the repo root
+python -m react.cli "explain the Agent class"
+
+# Or after installing in editable mode
+pip install -e .
+react "create a notes.md summarizing this project"
+```
+
+### Flags
+
+- `--model` / `-m` — Ollama model (default: auto-detect llama3.2 or qwen2.5-coder)
+- `--dangerously-allow-dotfiles` — permit writes to hidden files (use carefully)
 
 ## Tools
 
-| Tool | Description | Confirmation |
-|------|-------------|--------------|
-| `read_file` | Read a file (50 KB truncation) | No |
-| `search_code` | Substring search across source files | No |
-| `write_file` | Overwrite a file with full content | Yes |
-| `edit_file` | Apply a unified diff | Yes |
-| `undo` | Restore the most recent snapshot | No |
-| `run_command` | Run a shell command (30s timeout) | No |
+| Tool | Description |
+|------|-------------|
+| `read_file` | Read a file (50 KB truncation) |
+| `search_code` | Substring search across source files |
+| `write_file` | Overwrite a file (confirmation required) |
+| `edit_file` | Apply a unified diff (confirmation required) |
+| `undo` | Restore the most recent snapshot |
+| `run_command` | Run a shell command (30 s timeout, dangerous prefixes blocked) |
 
-**Safety**
-- All paths are confined to the current working directory.
-- Dotfiles (`.env`, `.git/*`, etc.) are refused unless you pass `--dangerously-allow-dotfiles`.
-- Every write/edit is snapshotted to `~/.react/snapshots/{timestamp}/` before the change.
-- `edit_file` validates the diff; if it cannot be applied, the tool returns a clear error so the model can retry.
+### Safety
 
-## Confirmation Flow
+- All file operations are confined to the current working directory.
+- Dotfiles are refused unless `--dangerously-allow-dotfiles` is set.
+- Every write/edit is snapshotted to `~/.react/snapshots/` before the change.
+- `run_command` blocks prefixes such as `rm -rf`, `sudo`, `dd`, `mkfs`, `wget`, `curl`.
+- Commands have a hard 30-second timeout.
 
-Before any `write_file` or `edit_file`, the CLI shows a Rich preview (green additions / red deletions) and prompts:
+### Confirmation
 
-```
-Apply this change? [y/n/e/a]:
-```
-
-- **y** — apply
-- **n** — skip (agent continues)
-- **e** — edit the proposed content/diff before applying
-- **a** — abort the whole run
-
-## Context Tracker
-
-The status line now shows:
+Before any write or edit the CLI shows a preview and asks:
 
 ```
-Thinking (llama3.2)  3 files in context · 1 modified
+Apply this change? [y/n/e/a]
 ```
 
-- "files in context" = set of files successfully read
-- "modified" = set of files written/edited in this session
+### Self-healing
 
-## Snapshots & Undo
+If `run_command` returns a non-zero exit code the agent is automatically told to analyze the error, use `edit_file` to fix the code, and retry. The same command is auto-retried at most twice; after that the loop stops and asks for manual intervention.
 
-Before every mutation the original file is copied to:
+## Development
 
+```bash
+pytest tests/
 ```
-~/.react/snapshots/YYYYMMDD-HHMMSS-ffffff/<relative-path>
-```
-
-`undo` restores the most recent snapshot.
 
 ## Configuration
 
-| Flag / Setting | Default | Description |
-|----------------|---------|-------------|
-| `--model` / `-m` | auto | Ollama model |
-| `--dangerously-allow-dotfiles` | off | Permit writes to hidden files |
+| Setting | Default | Description |
+|---------|---------|-------------|
 | `MAX_ITERATIONS` | 20 | Hard stop for the agent loop |
-
-## Troubleshooting
-
-- **Connection error** — run `ollama serve`
-- **Tool mode: JSON fallback** — model does not advertise native tools; the system prompt path is used
-- **Diff failed to apply** — the model produced a bad unified diff; it can retry
-- **Dotfile blocked** — add `--dangerously-allow-dotfiles` if you really mean it
-
-## Phase 3 — Shell Execution & Self-Healing
-
-`run_command(cmd)` executes a shell command in the working directory with a hard 30-second timeout.
-
-**Safety**
-- Dangerous prefixes are blocked: `rm -rf`, `sudo`, `dd`, `mkfs`, `shutdown`, etc.
-- Command runs with `cwd` set to the project root.
-- On non-zero exit, STDERR is shown in a red panel.
-
-**Self-healing**
-If a command fails, the agent automatically receives a system message telling it to analyze the error, use `edit_file` to fix the code, and retry. Auto-retries for the same command are limited to 2. After that the loop stops and asks for manual intervention.
-
-Example:
-```bash
-python main.py "run pytest and fix any failures"
-```
+| `MAX_READ_BYTES` | 50 KB | Truncation limit for `read_file` |
