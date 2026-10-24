@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import re
 
-from .ollama_compat import ollama
+from .providers import get_client
 import typer
 from rich.console import Console
 from rich.live import Live
@@ -52,9 +52,10 @@ _NATIVE_SYSTEM = _FALLBACK_SYSTEM.replace(
 
 
 class Agent:
-    def __init__(self, model: str) -> None:
+    def __init__(self, model: str, provider: str = "ollama") -> None:
         self.model = model
-        self.client = ollama.Client()
+        self.provider = provider
+        self.client = get_client(provider)
         self.messages: list[dict] = []
         self.files_in_context: set[str] = set()
         self.files_modified: set[str] = set()
