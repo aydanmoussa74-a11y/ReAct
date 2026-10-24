@@ -14,14 +14,42 @@ Requires Python 3.10+ and a running Ollama instance (`ollama serve`).
 
 ## Usage
 
-```bash
-# From the repo root
-python -m react.cli "explain the Agent class"
+### One-shot
 
-# Or after installing in editable mode
-pip install -e .
+```bash
+python -m react.cli "explain the Agent class"
+# or after pip install -e .
 react "create a notes.md summarizing this project"
 ```
+
+### Interactive REPL
+
+Run with no arguments to enter a persistent session. Conversation history and file context are kept across turns.
+
+```bash
+react
+# or
+python -m react.cli
+```
+
+```
+react> explain the Agent class
+react> now add a docstring to the run method
+react> /undo
+react> /clear
+react> /exit
+```
+
+**Slash commands**
+
+| Command | Action |
+|---------|--------|
+| `/help` | Show available commands |
+| `/undo` | Restore the most recent snapshot |
+| `/clear` | Clear conversation history (workspace unchanged) |
+| `/exit`, `/quit` | Exit the REPL |
+
+Ctrl+C during generation cancels the current turn and returns to the prompt.
 
 ### Flags
 
