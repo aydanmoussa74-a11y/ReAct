@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import subprocess
 
-import ollama
+from .ollama_compat import ollama
 from rich.console import Console
 from rich.status import Status
 
