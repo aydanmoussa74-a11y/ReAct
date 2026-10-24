@@ -47,6 +47,7 @@ react> /exit
 | `/help` | Show available commands |
 | `/model` | List recommended models and local status |
 | `/model <name>` | Switch to (and optionally download) a model |
+| `/commit` | Generate and apply a Conventional Commit from staged changes |
 | `/undo` | Restore the most recent snapshot |
 | `/clear` | Clear conversation history (workspace unchanged) |
 | `/exit`, `/quit` | Exit the REPL |
@@ -58,6 +59,18 @@ Ctrl+C during generation cancels the current turn and returns to the prompt.
 `/model` shows recommended models and whether they are already downloaded.
 `/model <name>` switches the active model immediately if it is local.
 If it is not local, ReAct asks whether to download it, then switches after a successful pull.
+
+### /commit
+
+`/commit` inspects staged changes and proposes a Conventional Commit message:
+
+1. Verifies the current directory is a git repository.
+2. If nothing is staged, offers to run `git add .`.
+3. Sends the staged diff to the active model with a strict prompt asking for a single Conventional Commit message.
+4. Shows the proposal in a panel and asks `[y]es [n]o [e]dit`.
+5. On confirmation, runs `git commit -m "..."` and displays the result.
+
+The flow is blocking and interactive, matching the write/edit confirmation style. Empty diffs are never sent to the model.
 
 ### Flags
 
