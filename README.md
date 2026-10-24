@@ -3,7 +3,8 @@
 ReAct is a local-first AI coding agent CLI.
 
 **Phase 1**: read-only tools (`read_file`, `search_code`) + tool-calling loop.  
-**Phase 2**: write tools (`write_file`, `edit_file`) with human confirmation, snapshots, and `undo`.
+**Phase 2**: write tools (`write_file`, `edit_file`) with human confirmation, snapshots, and `undo`.  
+**Phase 3**: `run_command` with self-healing on failure.
 
 ## Prerequisites
 
@@ -41,6 +42,7 @@ python test_phase2.py
 | `write_file` | Overwrite a file with full content | Yes |
 | `edit_file` | Apply a unified diff | Yes |
 | `undo` | Restore the most recent snapshot | No |
+| `run_command` | Run a shell command (30s timeout) | No |
 
 **Safety**
 - All paths are confined to the current working directory.
@@ -96,3 +98,20 @@ Before every mutation the original file is copied to:
 - **Tool mode: JSON fallback** — model does not advertise native tools; the system prompt path is used
 - **Diff failed to apply** — the model produced a bad unified diff; it can retry
 - **Dotfile blocked** — add `--dangerously-allow-dotfiles` if you really mean it
+
+## Phase 3 — Shell Execution & Self-Healing
+
+`run_command(cmd)` executes a shell command in the working directory with a hard 30-second timeout.
+
+**Safety**
+- Dangerous prefixes are blocked: `rm -rf`, `sudo`, `dd`, `mkfs`, `shutdown`, etc.
+- Command runs with `cwd` set to the project root.
+- On non-zero exit, STDERR is shown in a red panel.
+
+**Self-healing**
+If a command fails, the agent automatically receives a system message telling it to analyze the error, use `edit_file` to fix the code, and retry. Auto-retries for the same command are limited to 2. After that the loop stops and asks for manual intervention.
+
+Example:
+```bash
+python main.py "run pytest and fix any failures"
+```
