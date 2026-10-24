@@ -22,12 +22,10 @@ MAX_SEARCH_MATCHES = 200
 MAX_SEARCH_FILE_BYTES = 1 * 1024 * 1024
 MAX_COMMAND_OUTPUT_CHARS = 20_000
 
-DANGEROUS_PREFIXES = (
-    "rm -rf", "rm -fr", "sudo ", "sudo\t", "dd ", "mkfs", ":> ",
-    ": >", "shutdown", "reboot", "halt", "poweroff",
-    "chmod 777", "chown ", "mkfs.", "fdisk", "parted",
-    "wget ", "curl ",
-)
+DANGEROUS_COMMANDS = {
+    "rm", "sudo", "su", "dd", "mkfs", "mkfs.ext4", "fdisk", "parted",
+    "shutdown", "reboot", "halt", "poweroff", "chmod", "chown", "curl", "wget",
+}
 
 
 def read_file(path: str) -> str:
@@ -85,9 +83,9 @@ def search_code(query: str) -> str:
             break
     if not matches:
         return f"No matches for '{query}' in source files."
-    output = "\\n".join(matches)
+    output = "\n".join(matches)
     if truncated:
-        output += f"\\n[truncated: showing first {MAX_SEARCH_MATCHES} matches]"
+        output += f"\n[truncated: showing first {MAX_SEARCH_MATCHES} matches]"
     return output
 
 
@@ -163,6 +161,9 @@ def run_command(cmd: str) -> str:
         return f"[error] Invalid command syntax: {exc}"
     if not argv:
         return "[error] Command cannot be empty."
+    executable = Path(argv[0]).name.lower()
+    if executable in DANGEROUS_COMMANDS:
+        return f"[error] Command blocked by safety policy: {executable}"
     try:
         proc = subprocess.run(
             argv,
@@ -175,12 +176,12 @@ def run_command(cmd: str) -> str:
         out = proc.stdout or ""
         err = proc.stderr or ""
         combined = (
-            f"Exit Code: {proc.returncode}\\n"
-            f"STDOUT:\\n{out}\\n"
-            f"STDERR:\\n{err}"
+            f"Exit Code: {proc.returncode}\n"
+            f"STDOUT:\n{out}\n"
+            f"STDERR:\n{err}"
         )
         if len(combined) > MAX_COMMAND_OUTPUT_CHARS:
-            combined = combined[:MAX_COMMAND_OUTPUT_CHARS] + "\\n[truncated: command output limit reached]"
+            combined = combined[:MAX_COMMAND_OUTPUT_CHARS] + "\n[truncated: command output limit reached]"
         return combined
     except subprocess.TimeoutExpired:
         return "[error] Command timed out after 30 seconds."
@@ -238,7 +239,7 @@ TOOL_DEFINITIONS = [
     }},
     {"type": "function", "function": {
         "name": "run_command",
-        "description": "Run a shell command in the working directory (30s timeout). Dangerous commands are blocked.",
+        "description": "Run one command without shell interpretation (30s timeout); dangerous executables are blocked and user confirmation is required.",
         "parameters": {"type": "object", "required": ["cmd"],
                        "properties": {"cmd": {"type": "string"}}},
     }},
