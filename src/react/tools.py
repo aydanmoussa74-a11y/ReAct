@@ -6,6 +6,7 @@ import shutil
 import subprocess
 from pathlib import Path
 
+from .repo_map import generate_repo_map
 from .utils import (
     _WORKSPACE_ROOT,
     check_write_safety,
@@ -156,7 +157,17 @@ def run_command(cmd: str) -> str:
         return f"[error] run_command failed: {exc}"
 
 
+def get_repo_map() -> str:
+    """Return a structural map of the current workspace."""
+    return generate_repo_map(_WORKSPACE_ROOT)
+
+
 TOOL_DEFINITIONS = [
+    {"type": "function", "function": {
+        "name": "get_repo_map",
+        "description": "Get a high-level structural map of the current project, including filtered file paths and Python class/function names. Use this first when exploring an unfamiliar codebase before reading specific files.",
+        "parameters": {"type": "object", "properties": {}, "required": []},
+    }},
     {"type": "function", "function": {
         "name": "read_file",
         "description": "Read a file within the working directory.",
@@ -201,6 +212,7 @@ TOOL_DEFINITIONS = [
 ]
 
 _TOOL_CALLABLES = {
+    "get_repo_map": get_repo_map,
     "read_file": read_file,
     "search_code": search_code,
     "write_file": write_file,
