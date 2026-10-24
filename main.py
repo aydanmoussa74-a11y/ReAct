@@ -3,6 +3,7 @@
 
 Local-first AI coding agent. Phase 1: read-only tools + streaming.
 Phase 2: write_file / edit_file with human confirmation, snapshots, undo.
+Phase 3: run_command with self-healing on failure.
 """
 
 from __future__ import annotations
@@ -33,7 +34,7 @@ _FALLBACK_SYSTEM = (
     '  {"tool": "name", "args": {"arg": "value"}}  — then STOP\n'
     "  DONE: <final answer>\n"
     "Tools: read_file(path), search_code(query), write_file(path, content), "
-    "edit_file(path, diff), undo(). One call per turn."
+    "edit_file(path, diff), undo(), run_command(cmd). One call per turn."
 )
 
 
@@ -46,6 +47,7 @@ class Agent:
         self.messages: list[dict] = []
         self.files_in_context: set[str] = set()
         self.files_modified: set[str] = set()
+        self._cmd_retries: dict[str, int] = {}
 
     def _status_text(self) -> str:
         ctx = len(self.files_in_context)
@@ -166,7 +168,6 @@ class Agent:
             console.print(Panel(preview, title=f"write_file → {path}", border_style="yellow"))
         elif name == "edit_file":
             diff = args.get("diff", "")
-            # Colorize simple +/- lines
             colored = []
             for line in diff.splitlines()[:80]:
                 if line.startswith("+") and not line.startswith("+++"):
@@ -193,7 +194,6 @@ class Agent:
         if choice == "a":
             console.print("[red]Aborted.[/red]")
             raise typer.Exit(code=0)
-        # "e" — let user edit the args manually (simple path for now)
         if name == "write_file":
             new_content = Prompt.ask("New content", default=args.get("content", ""))
             args["content"] = new_content
@@ -217,16 +217,52 @@ class Agent:
                 self.messages.append({"role": "tool", "content": result})
                 return
 
-        result = execute_tool(name, args)
+        # Spinner for shell commands
+        if name == "run_command":
+            cmd = args.get("cmd", "")
+            with Status(f"[cyan]Running: {cmd}[/cyan]", console=console, spinner="dots"):
+                result = execute_tool(name, args)
+        else:
+            result = execute_tool(name, args)
 
         if name == "read_file" and not result.startswith("[error]"):
             self.files_in_context.add(args.get("path", ""))
         if name in ("write_file", "edit_file") and result.startswith("[ok]"):
             self.files_modified.add(args.get("path", ""))
 
-        preview = result[:300] + ("…" if len(result) > 300 else "")
-        console.print(Panel(preview, title=f"{name} result", border_style="green"))
+        # Special rendering for run_command failures
+        if name == "run_command" and "Exit Code: 0" not in result and not result.startswith("[error]"):
+            stderr_part = ""
+            if "STDERR:" in result:
+                stderr_part = result.split("STDERR:", 1)[1].strip()
+            if stderr_part:
+                console.print(Panel(stderr_part, title="STDERR", border_style="red"))
+            else:
+                console.print(Panel(result, title="Command failed", border_style="red"))
+        else:
+            preview = result[:300] + ("…" if len(result) > 300 else "")
+            console.print(Panel(preview, title=f"{name} result", border_style="green"))
+
         self.messages.append({"role": "tool", "content": result})
+
+        # Self-healing: if run_command failed, nudge the model to fix and retry
+        if name == "run_command" and "Exit Code: 0" not in result and not result.startswith("[error]"):
+            cmd = args.get("cmd", "")
+            retries = self._cmd_retries.get(cmd, 0)
+            if retries < 2:
+                self._cmd_retries[cmd] = retries + 1
+                heal_msg = (
+                    "The command failed. Here is the error. Please analyze it and "
+                    "use edit_file to fix the code, then try the command again."
+                )
+                self.messages.append({"role": "system", "content": heal_msg})
+                console.print("[yellow]Self-heal: asking model to fix and retry...[/yellow]")
+            else:
+                console.print(Panel(
+                    f"[red]Command failed twice: {cmd}\n"
+                    "Manual intervention required.[/red]",
+                    title="Self-heal limit reached",
+                ))
 
     def _stream_markdown(self, text: str) -> None:
         """Render markdown through a Rich Live panel (fallback path)."""
