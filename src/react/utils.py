@@ -56,7 +56,7 @@ def apply_unified_diff(original: str, diff: str) -> str | None:
 
     source = original.splitlines(keepends=True)
     patch = diff.splitlines(keepends=True)
-    hunk_re = re.compile(r"^@@ -(\\d+)(?:,\\d+)? \\+(\\d+)(?:,\\d+)? @@")
+    hunk_re = re.compile(r"^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@")
     result: list[str] = []
     src_idx = 0
     i = 0
@@ -74,7 +74,7 @@ def apply_unified_diff(original: str, diff: str) -> str | None:
             i += 1
             continue
 
-        match = hunk_re.match(line.rstrip("\\r\\n"))
+        match = hunk_re.match(line.rstrip("\r\n"))
         if not match:
             return None
         saw_hunk = True
