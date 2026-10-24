@@ -68,9 +68,8 @@ class Agent:
     def _chat(self, use_native: bool) -> list[dict]:
         """Stream a chat response; return tool calls or [].
 
-        Uses stream=True so tokens arrive in real-time through Rich Live.
-        For native mode, tool_calls are accumulated across chunks.
-        For JSON fallback, text is streamed while also accumulated for parsing.
+        Uses stream=True. Final answers are rendered token-by-token through a
+        Rich Live panel as they arrive. Tool calls are accumulated and returned.
         """
         kwargs = {"model": self.model, "messages": self.messages, "stream": True}
         if use_native:
@@ -78,29 +77,47 @@ class Agent:
 
         collected_content: list[str] = []
         accumulated_tool_calls: list[dict] = []
-        done = False
+        live: Live | None = None
+        live_parts: list[str] = []
 
-        with Status(f"[cyan]Thinking ({self.model})  "
-                     f"[dim]{self.files_in_context} files in context[/dim]",
-                    console=console, spinner="dots"):
+        status = Status(
+            f"[cyan]Thinking ({self.model})  "
+            f"[dim]{self.files_in_context} files in context[/dim]",
+            console=console, spinner="dots",
+        )
+        status.start()
+
+        try:
             stream = self.client.chat(**kwargs)
-            # Handle both streaming (iterator) and non-streaming (dict) responses.
-            if isinstance(stream, dict):
-                chunks = [stream]
-            else:
-                chunks = stream
+            chunks = [stream] if isinstance(stream, dict) else stream
             for chunk in chunks:
                 msg = chunk.get("message", {})
-                content = msg.get("content", "")
-                if content:
-                    collected_content.append(content)
-                # Accumulate tool calls (native mode).
+                content = msg.get("content", "") or ""
                 tcs = msg.get("tool_calls") or []
+
                 if tcs:
                     accumulated_tool_calls = tcs
-                done = chunk.get("done", False)
-                if done:
+                    if live is not None:
+                        live.stop()
+                        live = None
+
+                if content:
+                    collected_content.append(content)
+                    # Stream final-answer tokens live as they arrive
+                    if not accumulated_tool_calls:
+                        if live is None:
+                            status.stop()
+                            live = Live(console=console, refresh_per_second=20)
+                            live.start()
+                        live_parts.append(content)
+                        live.update(Markdown("".join(live_parts)))
+
+                if chunk.get("done", False):
                     break
+        finally:
+            status.stop()
+            if live is not None:
+                live.stop()
 
         # Append the full assistant message to the conversation log.
         full_msg = {"role": "assistant"}
@@ -117,9 +134,7 @@ class Agent:
                     fn = tc["function"]
                     console.print(f"  [yellow]→ {fn['name']}({json.dumps(fn.get('arguments', {}))})[/yellow]")
                 return accumulated_tool_calls
-            # No tool calls — stream the final answer live.
-            if full_text:
-                self._stream_markdown(full_text)
+            # Final answer was already streamed live token-by-token
             return []
 
         # --- JSON fallback path ---
@@ -128,6 +143,7 @@ class Agent:
 
         done_match = re.match(r"^DONE:\s*(.*)", full_text.strip(), re.DOTALL)
         if done_match:
+            # Already streamed the raw content; re-render the cleaned answer
             self._stream_markdown(done_match.group(1).strip())
             return []
 
@@ -163,7 +179,8 @@ class Agent:
         self.messages.append({"role": "tool", "content": result})
 
     def _stream_markdown(self, text: str) -> None:
-        """Render markdown through a Rich Live panel, streaming word-by-word."""
+        """Render markdown through a Rich Live panel, streaming word-by-word.
+        Used as a fallback when the full answer is already collected."""
         words = text.split(" ")
         collected: list[str] = []
         with Live(refresh_per_second=15, console=console) as live:
