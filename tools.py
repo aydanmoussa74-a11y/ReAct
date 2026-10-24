@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import os
 import shutil
+import subprocess
 from datetime import datetime
 from pathlib import Path
 
@@ -210,6 +211,43 @@ def undo() -> str:
         return f"[error] undo failed: {exc}"
 
 
+DANGEROUS_PREFIXES = (
+    "rm -rf", "rm -fr", "sudo ", "sudo\t", "dd ", "mkfs", ":> ",
+    ": >", "shutdown", "reboot", "halt", "poweroff",
+    "chmod 777", "chown ", "mkfs.", "fdisk", "parted",
+)
+
+def run_command(cmd: str) -> str:
+    """Run a shell command in the working directory with a 30s timeout.
+
+    Blocks dangerous prefixes. Returns formatted exit code + stdout/stderr.
+    """
+    stripped = cmd.strip()
+    for bad in DANGEROUS_PREFIXES:
+        if stripped.startswith(bad) or f" {bad}" in stripped or stripped.startswith(bad.strip()):
+            return "[error] Dangerous command blocked."
+    try:
+        proc = subprocess.run(
+            stripped,
+            shell=True,
+            capture_output=True,
+            text=True,
+            timeout=30,
+            cwd=_WORKSPACE_ROOT,
+        )
+        out = proc.stdout or ""
+        err = proc.stderr or ""
+        return (
+            f"Exit Code: {proc.returncode}\n"
+            f"STDOUT:\n{out}\n"
+            f"STDERR:\n{err}"
+        )
+    except subprocess.TimeoutExpired:
+        return "[error] Command timed out after 30 seconds."
+    except Exception as exc:
+        return f"[error] run_command failed: {exc}"
+
+
 TOOL_DEFINITIONS = [
     {"type": "function", "function": {
         "name": "read_file",
@@ -248,6 +286,13 @@ TOOL_DEFINITIONS = [
         "description": "Restore the most recent file snapshot.",
         "parameters": {"type": "object", "properties": {}, "required": []},
     }},
+    {"type": "function", "function": {
+        "name": "run_command",
+        "description": "Run a shell command in the working directory (30s timeout). Dangerous commands are blocked.",
+        "parameters": {"type": "object", "required": ["cmd"],
+                       "properties": {"cmd": {"type": "string",
+                                              "description": "The shell command to execute."}}},
+    }},
 ]
 
 _TOOL_CALLABLES = {
@@ -256,6 +301,7 @@ _TOOL_CALLABLES = {
     "write_file": write_file,
     "edit_file": edit_file,
     "undo": undo,
+    "run_command": run_command,
 }
 
 
