@@ -16,6 +16,7 @@ from .agent import Agent
 from .tools import execute_tool
 from .model_manager import RECOMMENDED_MODELS, get_local_models, pull_model
 from .git_utils import is_git_repo, get_staged_diff, execute_commit
+from .mcp_client import load_mcp_tools, get_mcp_tools, get_mcp_servers
 import react.utils as utils_mod
 
 app = typer.Typer(add_completion=False, help="ReAct — a local-first AI coding agent.")
@@ -27,6 +28,8 @@ _HELP = """\
   /model             List recommended models and local status
   /model <name>      Switch to (and optionally download) a model
   /commit            Generate and apply a Conventional Commit from staged changes
+  /mcp status        Show connected MCP servers and tools
+  /mcp reload        Reload MCP config and reconnect
   /undo              Restore the most recent snapshot
   /clear             Clear conversation history
   /exit, /quit       Exit the REPL
@@ -93,8 +96,36 @@ def _handle_slash(cmd: str, agent: Agent) -> bool:
     if name == "/commit":
         _handle_commit(agent)
         return False
+    if name == "/mcp":
+        _handle_mcp(parts[1:] if len(parts) > 1 else ["status"])
+        return False
     console.print(f"[yellow]Unknown command: {name}. Type /help.[/yellow]")
     return False
+
+
+def _handle_mcp(args: list[str]) -> None:
+    """Show MCP status or reload config."""
+    sub = args[0].lower() if args else "status"
+    if sub == "reload":
+        tools = load_mcp_tools()
+        console.print(f"[green]Reloaded MCP config. {len(tools)} tools available.[/green]")
+        return
+    servers = get_mcp_servers()
+    tools = get_mcp_tools()
+    if not servers:
+        console.print("[dim]No MCP servers configured. Create ~/.react/mcp_config.json[/dim]")
+        return
+    table = Table(title="MCP Servers", show_header=True, header_style="bold cyan")
+    table.add_column("Server")
+    table.add_column("Tools")
+    by_server: dict[str, list[str]] = {}
+    for t in tools:
+        srv = t.get("_mcp_server", "?")
+        by_server.setdefault(srv, []).append(t["function"]["name"])
+    for name in servers:
+        tool_list = ", ".join(by_server.get(name, [])) or "(none)"
+        table.add_row(name, tool_list)
+    console.print(table)
 
 
 def _propose_commit_message(agent: Agent, diff: str) -> str:
