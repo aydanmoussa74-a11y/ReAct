@@ -75,3 +75,11 @@ def test_slash_exit_and_clear():
     assert len(agent.files_in_context) == 0
     assert _handle_slash("/exit", agent) is True
     assert _handle_slash("/quit", agent) is True
+
+
+def test_model_manager_local_list():
+    """get_local_models should return a list (empty is fine if Ollama is down)."""
+    from react.model_manager import get_local_models, RECOMMENDED_MODELS
+    models = get_local_models()
+    assert isinstance(models, list)
+    assert len(RECOMMENDED_MODELS) >= 3
