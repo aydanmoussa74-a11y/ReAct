@@ -21,14 +21,15 @@ Requires Python 3.10+. Choose a provider: Ollama for a reachable local server, o
 
    ```sh
    export REACT_PROVIDER=openrouter
-   export OPENROUTER_API_KEY='paste-your-key-here'
+   read -s -p 'OpenRouter API key: ' OPENROUTER_API_KEY; echo
+   export OPENROUTER_API_KEY
    # Optional: choose a specific model ID from https://openrouter.ai/models
    export REACT_MODEL=openrouter/auto
    ```
 
 3. Run `react` or `react "explain this project"`.
 
-The key is read from the environment and is not written to the repository. OpenRouter usage may cost money; check model pricing and account limits before using it. The current adapter uses ReAct's JSON-tool fallback mode and does not yet support native provider tool calls.
+The key is read from the environment, the hidden prompt avoids putting it directly in shell history, and it is not written to the repository. Keep the key private. OpenRouter usage may cost money; check model pricing and account limits before using it. The current adapter uses ReAct's JSON-tool fallback mode and does not yet support native provider tool calls.
 
 For Ollama, keep `REACT_PROVIDER` unset (or set it to `ollama`) and make sure the Ollama server is reachable. A Python Ollama client alone is not the server.
 
