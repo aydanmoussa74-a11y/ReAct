@@ -9,9 +9,11 @@ import typer
 from rich.console import Console
 from rich.panel import Panel
 from rich.prompt import Prompt
+from rich.table import Table
 
 from .agent import Agent
 from .tools import execute_tool
+from .model_manager import RECOMMENDED_MODELS, get_local_models, pull_model
 import react.utils as utils_mod
 
 app = typer.Typer(add_completion=False, help="ReAct — a local-first AI coding agent.")
@@ -19,10 +21,12 @@ console = Console()
 
 _HELP = """\
 [bold]Slash commands[/bold]
-  /help          Show this help
-  /undo          Restore the most recent snapshot
-  /clear         Clear conversation history
-  /exit, /quit   Exit the REPL
+  /help              Show this help
+  /model             List recommended models and local status
+  /model <name>      Switch to (and optionally download) a model
+  /undo              Restore the most recent snapshot
+  /clear             Clear conversation history
+  /exit, /quit       Exit the REPL
 
 Type a normal prompt to talk to the agent.
 Ctrl+C cancels the current generation and returns to the prompt.
@@ -80,8 +84,47 @@ def _handle_slash(cmd: str, agent: Agent) -> bool:
         result = execute_tool("undo", {})
         console.print(Panel(result, title="undo", border_style="green"))
         return False
+    if name == "/model":
+        _handle_model(parts[1:] if len(parts) > 1 else [], agent)
+        return False
     console.print(f"[yellow]Unknown command: {name}. Type /help.[/yellow]")
     return False
+
+
+def _handle_model(args: list[str], agent: Agent) -> None:
+    """List recommended models or switch the active model."""
+    local = set(get_local_models())
+    if not args:
+        table = Table(title="Recommended Models", show_header=True, header_style="bold cyan")
+        table.add_column("Model")
+        table.add_column("Local", justify="center")
+        for name in RECOMMENDED_MODELS:
+            status = "✅" if name in local else "❌"
+            table.add_row(name, status)
+        console.print(table)
+        if agent.model:
+            console.print(f"[dim]Active model: {agent.model}[/dim]")
+        return
+
+    target = args[0]
+    if target in local:
+        agent.model = target
+        console.print(f"[green]Switched to {target}.[/green]")
+        return
+
+    answer = Prompt.ask(
+        f"[yellow]Model {target} not found locally. Download it now?[/yellow]",
+        choices=["y", "n"],
+        default="n",
+    )
+    if answer.lower() != "y":
+        console.print("[dim]Cancelled.[/dim]")
+        return
+    if pull_model(target):
+        agent.model = target
+        console.print(f"[green]Downloaded and switched to {target}.[/green]")
+    else:
+        console.print(f"[red]Could not download {target}.[/red]")
 
 
 def _repl(agent: Agent, use_native: bool) -> None:
