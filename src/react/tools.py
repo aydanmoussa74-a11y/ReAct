@@ -100,9 +100,9 @@ def search_code(query: str) -> str:
             break
     if not matches:
         return f"No matches for '{query}' in source files."
-    output = "\\n".join(matches)
+    output = "\n".join(matches)
     if truncated:
-        output += f"\\n[truncated: search limits reached; showing at most {MAX_SEARCH_MATCHES} matches]"
+        output += f"\n[truncated: search limits reached; showing at most {MAX_SEARCH_MATCHES} matches]"
     return output
 
 
