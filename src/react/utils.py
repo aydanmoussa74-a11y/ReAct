@@ -56,7 +56,7 @@ def apply_unified_diff(original: str, diff: str) -> str | None:
 
     source = original.splitlines(keepends=True)
     patch = diff.splitlines(keepends=True)
-    hunk_re = re.compile(r"^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@")
+    hunk_re = re.compile(r"^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@")
     result: list[str] = []
     src_idx = 0
     i = 0
@@ -79,6 +79,8 @@ def apply_unified_diff(original: str, diff: str) -> str | None:
             return None
         saw_hunk = True
         old_start = int(match.group(1))
+        old_count = int(match.group(2) or 1)
+        new_count = int(match.group(4) or 1)
         target = max(old_start - 1, 0)
         if target < src_idx or target > len(source):
             return None
@@ -86,6 +88,7 @@ def apply_unified_diff(original: str, diff: str) -> str | None:
         src_idx = target
         i += 1
         old_seen = 0
+        new_seen = 0
 
         while i < len(patch) and not patch[i].startswith("@@"):
             item = patch[i]
@@ -101,6 +104,7 @@ def apply_unified_diff(original: str, diff: str) -> str | None:
                 result.append(source[src_idx])
                 src_idx += 1
                 old_seen += 1
+                new_seen += 1
             elif marker == "-":
                 if src_idx >= len(source) or source[src_idx] != body:
                     return None
@@ -108,9 +112,12 @@ def apply_unified_diff(original: str, diff: str) -> str | None:
                 old_seen += 1
             elif marker == "+":
                 result.append(body)
+                new_seen += 1
             else:
                 return None
             i += 1
+        if old_seen != old_count or new_seen != new_count:
+            return None
 
     if not saw_hunk:
         return None
