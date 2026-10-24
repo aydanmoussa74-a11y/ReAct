@@ -16,6 +16,7 @@ from rich.status import Status
 from rich.syntax import Syntax
 
 from .tools import TOOL_DEFINITIONS, execute_tool
+from .mcp_client import get_mcp_tools
 
 console = Console()
 MAX_ITERATIONS = 20
@@ -73,7 +74,12 @@ class Agent:
     def _chat(self, use_native: bool) -> list[dict]:
         kwargs = {"model": self.model, "messages": self.messages, "stream": True}
         if use_native:
-            kwargs["tools"] = TOOL_DEFINITIONS
+            # Merge local tools with any loaded MCP tools
+            merged = list(TOOL_DEFINITIONS)
+            for t in get_mcp_tools():
+                clean = {k: v for k, v in t.items() if k != "_mcp_server"}
+                merged.append(clean)
+            kwargs["tools"] = merged
 
         collected: list[str] = []
         tool_calls: list[dict] = []
