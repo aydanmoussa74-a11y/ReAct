@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import subprocess
 
 import ollama
 import typer
@@ -14,6 +15,7 @@ from rich.table import Table
 from .agent import Agent
 from .tools import execute_tool
 from .model_manager import RECOMMENDED_MODELS, get_local_models, pull_model
+from .git_utils import is_git_repo, get_staged_diff, execute_commit
 import react.utils as utils_mod
 
 app = typer.Typer(add_completion=False, help="ReAct — a local-first AI coding agent.")
@@ -24,6 +26,7 @@ _HELP = """\
   /help              Show this help
   /model             List recommended models and local status
   /model <name>      Switch to (and optionally download) a model
+  /commit            Generate and apply a Conventional Commit from staged changes
   /undo              Restore the most recent snapshot
   /clear             Clear conversation history
   /exit, /quit       Exit the REPL
@@ -87,8 +90,83 @@ def _handle_slash(cmd: str, agent: Agent) -> bool:
     if name == "/model":
         _handle_model(parts[1:] if len(parts) > 1 else [], agent)
         return False
+    if name == "/commit":
+        _handle_commit(agent)
+        return False
     console.print(f"[yellow]Unknown command: {name}. Type /help.[/yellow]")
     return False
+
+
+def _propose_commit_message(agent: Agent, diff: str) -> str:
+    """Ask the model for a single Conventional Commit message."""
+    system = (
+        "Analyze this git diff and generate a single, concise Conventional Commit message "
+        "(e.g., feat:, fix:, refactor:, docs:). Do not include any other text, just the commit message."
+    )
+    messages = [
+        {"role": "system", "content": system},
+        {"role": "user", "content": f"```diff\n{diff}\n```"},
+    ]
+    try:
+        resp = agent.client.chat(model=agent.model, messages=messages, stream=False)
+        msg = resp.get("message", {}).get("content", "").strip()
+        for line in msg.splitlines():
+            line = line.strip().strip('"').strip("'")
+            if line:
+                return line
+        return "chore: update"
+    except Exception:
+        return "chore: update"
+
+
+def _handle_commit(agent: Agent) -> None:
+    """Interactive Conventional Commit flow from staged changes."""
+    if not is_git_repo():
+        console.print("[red]Not a git repository. Initialize one with `git init` first.[/red]")
+        return
+
+    diff = get_staged_diff()
+    if diff is None:
+        answer = Prompt.ask(
+            "[yellow]No staged changes. Would you like me to run `git add .`?[/yellow]",
+            choices=["y", "n"],
+            default="n",
+        )
+        if answer.lower() != "y":
+            console.print("[dim]Aborted.[/dim]")
+            return
+        try:
+            subprocess.run(["git", "add", "."], check=False, capture_output=True, text=True)
+        except Exception as exc:
+            console.print(f"[red]git add failed: {exc}[/red]")
+            return
+        diff = get_staged_diff()
+        if diff is None:
+            console.print("[yellow]Still no staged changes. Nothing to commit.[/yellow]")
+            return
+
+    proposed = _propose_commit_message(agent, diff)
+    console.print(Panel(proposed, title="Proposed commit message", border_style="cyan"))
+
+    choice = Prompt.ask(
+        "[yellow]Apply this commit?[/yellow]",
+        choices=["y", "n", "e"],
+        default="n",
+    )
+    if choice == "n":
+        console.print("[dim]Aborted.[/dim]")
+        return
+    if choice == "e":
+        proposed = Prompt.ask("Commit message", default=proposed).strip()
+        if not proposed:
+            console.print("[dim]Empty message. Aborted.[/dim]")
+            return
+
+    ok, output = execute_commit(proposed)
+    if ok:
+        console.print(Panel(output or f"Committed: {proposed}", title="Commit successful", border_style="green"))
+    else:
+        console.print(Panel(output or "Unknown error", title="Commit failed", border_style="red"))
 
 
 def _handle_model(args: list[str], agent: Agent) -> None:
