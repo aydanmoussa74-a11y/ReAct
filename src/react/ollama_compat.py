@@ -1,22 +1,34 @@
 """Optional Ollama dependency shim.
 
-The CLI and local tools can be inspected and tested without installing the
-Ollama client. Install the `ai` extra to connect to an Ollama server.
+Core CLI commands and tests can run without the Ollama client installed.
+Actual model operations fail with an actionable message until the optional
+`ai` extra is installed in a compatible environment.
 """
 from __future__ import annotations
 
-from types import SimpleNamespace
 
+class _MissingOllamaClient:
+    def __init__(self, *args, **kwargs) -> None:
+        # Permit constructing an Agent for local commands that do not call an LLM.
+        pass
 
-def _missing_client(*args, **kwargs):
-    raise RuntimeError(
-        "Ollama support is not installed. Install ReAct with "
-        "`pip install -e '.[ai]'` in an environment where the ollama "
-        "dependency can be installed."
-    )
+    @staticmethod
+    def _raise(*args, **kwargs):
+        raise RuntimeError(
+            "Ollama support is not installed. Install ReAct with "
+            "`pip install -e '.[ai]'` in an environment where the ollama "
+            "dependency can be installed."
+        )
+
+    chat = _raise
+    list = _raise
+    show = _raise
+    generate = _raise
 
 
 try:
     import ollama as ollama  # type: ignore[no-redef]
 except ImportError:
-    ollama = SimpleNamespace(Client=_missing_client)
+    from types import SimpleNamespace
+
+    ollama = SimpleNamespace(Client=_MissingOllamaClient)
