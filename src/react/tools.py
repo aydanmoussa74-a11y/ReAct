@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import shutil
 import shlex
 import subprocess
@@ -19,6 +20,7 @@ from .utils import (
 
 MAX_READ_BYTES = 50 * 1024
 MAX_SEARCH_MATCHES = 200
+MAX_SEARCH_FILES = 5_000
 MAX_SEARCH_FILE_BYTES = 1 * 1024 * 1024
 MAX_COMMAND_OUTPUT_CHARS = 20_000
 
@@ -53,39 +55,54 @@ _SKIP_DIRS = {"venv", "__pycache__", ".git", ".venv", "node_modules", "dist", "b
 
 
 def search_code(query: str) -> str:
-    """Search source files with strict result and per-file size limits."""
+    """Search source files with strict traversal, file-size, and result limits."""
     if not query:
         return "[error] Search query cannot be empty."
     matches: list[str] = []
+    files_seen = 0
     truncated = False
-    for src_file in sorted(_WORKSPACE_ROOT.rglob("*")):
-        try:
-            rel = src_file.relative_to(_WORKSPACE_ROOT)
-        except ValueError:
-            continue
-        if any(part in _SKIP_DIRS or part.startswith(".") for part in rel.parts):
-            continue
-        if not src_file.is_file() or src_file.suffix.lower() not in SEARCH_EXTENSIONS:
-            continue
-        try:
-            if src_file.stat().st_size > MAX_SEARCH_FILE_BYTES:
+    for root, dirs, filenames in os.walk(_WORKSPACE_ROOT, topdown=True, followlinks=False):
+        root_path = Path(root)
+        dirs[:] = sorted(
+            d for d in dirs
+            if d not in _SKIP_DIRS and not d.startswith(".")
+            and not (root_path / d).is_symlink()
+        )
+        for filename in sorted(filenames):
+            src_file = root_path / filename
+            try:
+                rel = src_file.relative_to(_WORKSPACE_ROOT)
+            except ValueError:
                 continue
-            text = src_file.read_text(encoding="utf-8")
-        except (UnicodeDecodeError, OSError):
-            continue
-        for lineno, line in enumerate(text.splitlines(), start=1):
-            if query in line:
-                matches.append(f"{rel}:{lineno}: {line.rstrip()}")
-                if len(matches) >= MAX_SEARCH_MATCHES:
-                    truncated = True
-                    break
+            if any(part in _SKIP_DIRS or part.startswith(".") for part in rel.parts):
+                continue
+            if src_file.suffix.lower() not in SEARCH_EXTENSIONS:
+                continue
+            files_seen += 1
+            if files_seen > MAX_SEARCH_FILES:
+                truncated = True
+                break
+            try:
+                if src_file.stat().st_size > MAX_SEARCH_FILE_BYTES:
+                    continue
+                text = src_file.read_text(encoding="utf-8")
+            except (UnicodeDecodeError, OSError):
+                continue
+            for lineno, line in enumerate(text.splitlines(), start=1):
+                if query in line:
+                    matches.append(f"{rel}:{lineno}: {line.rstrip()}")
+                    if len(matches) >= MAX_SEARCH_MATCHES:
+                        truncated = True
+                        break
+            if truncated:
+                break
         if truncated:
             break
     if not matches:
         return f"No matches for '{query}' in source files."
-    output = "\n".join(matches)
+    output = "\\n".join(matches)
     if truncated:
-        output += f"\n[truncated: showing first {MAX_SEARCH_MATCHES} matches]"
+        output += f"\\n[truncated: search limits reached; showing at most {MAX_SEARCH_MATCHES} matches]"
     return output
 
 
