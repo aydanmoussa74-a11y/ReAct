@@ -1,20 +1,15 @@
-# ReAct — Phase 1: Agentic Tool Calling
+# ReAct — Phase 1 + Phase 2
 
-ReAct is a local-first AI coding agent CLI. Phase 1 adds **read-only tools**
-and a **tool-calling loop**: the LLM decides when to invoke a tool, the agent
-executes it, feeds results back, and repeats until done.
+ReAct is a local-first AI coding agent CLI.
+
+**Phase 1**: read-only tools (`read_file`, `search_code`) + tool-calling loop.  
+**Phase 2**: write tools (`write_file`, `edit_file`) with human confirmation, snapshots, and `undo`.
 
 ## Prerequisites
 
-1. **Python 3.10+** — [python.org](https://www.python.org/)
-2. **Ollama** — [ollama.com](https://ollama.com)
-
-   ```bash
-   ollama serve               # start the server
-   ollama pull llama3.2       # or qwen2.5-coder:7b
-   ```
-
-3. **Dependencies**
+1. **Python 3.10+**
+2. **Ollama** — `ollama serve` then `ollama pull llama3.2` (or any model with tool support)
+3. Dependencies:
 
    ```bash
    pip install -r requirements.txt
@@ -23,96 +18,81 @@ executes it, feeds results back, and repeats until done.
 ## Quick Start
 
 ```bash
-# Ask the agent to read a file
-python main.py "read main.py and explain its purpose"
+# Phase 1 style — read and search
+python main.py "read main.py and explain the Agent class"
 
-# Ask the agent to search for a pattern
-python main.py "find where the Agent class is defined"
+# Phase 2 — the agent can propose writes (you confirm)
+python main.py "create a file called notes.md with a short summary of this project"
 
-# Specify a model
-python main.py "explain how search_code works" --model llama3.2
+# Allow writes to dotfiles (use carefully)
+python main.py "update .env with a new key" --dangerously-allow-dotfiles
 
-# Run the test suite (no Ollama required — uses mocks)
+# Run tests
 python test_phase1.py
+python test_phase2.py
 ```
 
-## Tools Available
+## Tools
 
-| Tool | Description | Arguments |
-|------|-------------|-----------|
-| `read_file` | Read a file within the working directory | `path` (relative) |
-| `search_code` | Search for a substring across source files | `query` |
+| Tool | Description | Confirmation |
+|------|-------------|--------------|
+| `read_file` | Read a file (50 KB truncation) | No |
+| `search_code` | Substring search across source files | No |
+| `write_file` | Overwrite a file with full content | Yes |
+| `edit_file` | Apply a unified diff | Yes |
+| `undo` | Restore the most recent snapshot | No |
 
-**Safety**: Both tools are read-only and path-safe — paths outside the
-working directory are rejected (e.g., `../../etc/passwd`).
+**Safety**
+- All paths are confined to the current working directory.
+- Dotfiles (`.env`, `.git/*`, etc.) are refused unless you pass `--dangerously-allow-dotfiles`.
+- Every write/edit is snapshotted to `~/.react/snapshots/{timestamp}/` before the change.
+- `edit_file` validates the diff; if it cannot be applied, the tool returns a clear error so the model can retry.
 
-## How It Works
+## Confirmation Flow
 
-```
-User prompt
-    │
-    ▼
-Agent.send(prompt + tool definitions to Ollama)
-    │
-    ├──► LLM returns tool_call(s) → Agent executes → result fed back → repeat
-    └──► LLM returns final answer → streamed to terminal (DONE)
-```
-
-The CLI checks whether the model supports **native tool-calling** (via
-`ollama show`). If yes, it passes tools through Ollama's `tools` parameter.
-If not, it falls back to a **system prompt** that forces JSON output:
-
-```json
-{"tool": "read_file", "args": {"path": "main.py"}}
-```
-
-or `DONE: <final answer>` to terminate.
-
-## TUI (Terminal UI)
+Before any `write_file` or `edit_file`, the CLI shows a Rich preview (green additions / red deletions) and prompts:
 
 ```
-╭── ReAct · llama3.2 ─────────────────────╮
-│ read main.py and explain its purpose     │
-╰─────────────────────────────────────────╯
-Tool mode: native
-
-  → read_file({"path": "main.py"})
-╭── read_file result ─────────────────────╮
-│ #!/usr/bin/env python3                   │
-│ ... (file contents, truncated)          │
-╰─────────────────────────────────────────╯
-⠋ Thinking (llama3.2)  1 files in context
-The file defines a Typer CLI with an Agent class.
+Apply this change? [y/n/e/a]:
 ```
 
-- **Model name** — shown in the header panel and spinner status.
-- **Files in context** — a counter that increments each time `read_file` succeeds.
-- **Spinner** — a Rich `Status` spinner while the model is thinking.
-- **Streaming** — final answers stream word-by-word through a Rich `Live` panel.
+- **y** — apply
+- **n** — skip (agent continues)
+- **e** — edit the proposed content/diff before applying
+- **a** — abort the whole run
 
-## Testing
+## Context Tracker
 
-```bash
-python test_phase1.py
+The status line now shows:
+
+```
+Thinking (llama3.2)  3 files in context · 1 modified
 ```
 
-14 tests covering:
-- **Tools**: reading files, not-found errors, traversal blocking, 50KB truncation,
-  multi-extension search, empty results, `execute_tool` dispatch, broad exception handling
-- **Agent loop** (mocked LLM with streaming): native tool-calling, JSON fallback,
-  multi-turn (read → search → done), max-iterations cap
+- "files in context" = set of files successfully read
+- "modified" = set of files written/edited in this session
+
+## Snapshots & Undo
+
+Before every mutation the original file is copied to:
+
+```
+~/.react/snapshots/YYYYMMDD-HHMMSS-ffffff/<relative-path>
+```
+
+`undo` restores the most recent snapshot.
 
 ## Configuration
 
-| Setting | Default | Description |
-|---------|---------|-------------|
-| `--model` / `-m` | auto-detect | Ollama model to use |
-| `MAX_ITERATIONS` | 20 | Max tool-call loop iterations before stopping |
-| `MAX_READ_BYTES` | 50 KB | Max file size returned by `read_file` |
+| Flag / Setting | Default | Description |
+|----------------|---------|-------------|
+| `--model` / `-m` | auto | Ollama model |
+| `--dangerously-allow-dotfiles` | off | Permit writes to hidden files |
+| `MAX_ITERATIONS` | 20 | Hard stop for the agent loop |
 
 ## Troubleshooting
 
-- **Connection error** — Ollama isn't running. Run `ollama serve`.
-- **Model not found** — pull it: `ollama pull <model-name>`.
-- **Tool mode: JSON fallback** — your model doesn't support native tools;
-  the CLI auto-detected this and is using the JSON system-prompt path.
+- **Connection error** — run `ollama serve`
+- **Tool mode: JSON fallback** — model does not advertise native tools; the system prompt path is used
+- **Diff failed to apply** — the model produced a bad unified diff; it can retry
+- **Dotfile blocked** — add `--dangerously-allow-dotfiles` if you really mean it
