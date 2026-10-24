@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import re
 
-import ollama
+from .ollama_compat import ollama
 import typer
 from rich.console import Console
 from rich.live import Live
