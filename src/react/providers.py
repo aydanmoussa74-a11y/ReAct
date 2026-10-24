@@ -83,9 +83,13 @@ class OpenRouterClient:
         payload = {
             "model": model,
             "messages": [
-                {"role": m.get("role", "user"), "content": m.get("content", "")}
+                (
+                    {"role": "user", "content": "[ReAct tool result]\\n" + str(m.get("content", ""))}
+                    if m.get("role") == "tool"
+                    else {"role": m.get("role", "user"), "content": m.get("content", "")}
+                )
                 for m in messages
-                if m.get("role") in {"system", "user", "assistant"}
+                if m.get("role") in {"system", "user", "assistant", "tool"}
             ],
             "stream": False,
         }
