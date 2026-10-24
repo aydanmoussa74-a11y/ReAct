@@ -98,8 +98,12 @@ class OpenRouterClient:
         if not choices:
             raise RuntimeError("OpenRouter returned no model response.")
         message = choices[0].get("message") or {}
+        content = message.get("content") or ""
+        if not isinstance(content, str):
+            # ReAct fallback parsing consumes plain text only.
+            content = json.dumps(content, ensure_ascii=False)
         return {
-            "message": {"role": "assistant", "content": message.get("content") or ""},
+            "message": {"role": "assistant", "content": content},
             "done": True,
         }
 
