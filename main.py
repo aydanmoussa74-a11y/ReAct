@@ -1,10 +1,8 @@
 #!/usr/bin/env python3
-"""ReAct CLI — Phase 1: agentic tool calling.
+"""ReAct CLI — Phase 1 + Phase 2: agentic tool calling with write confirmation.
 
-A local-first AI coding agent that streams a prompt to a local Ollama model
-with read-only tools (read_file, search_code), executes tool calls, feeds
-results back, and loops until done.  Falls back to a JSON system prompt
-if the model doesn't support native tool-calling.
+Local-first AI coding agent. Phase 1: read-only tools + streaming.
+Phase 2: write_file / edit_file with human confirmation, snapshots, undo.
 """
 
 from __future__ import annotations
@@ -18,9 +16,12 @@ from rich.console import Console
 from rich.live import Live
 from rich.markdown import Markdown
 from rich.panel import Panel
+from rich.prompt import Prompt
 from rich.status import Status
+from rich.syntax import Syntax
 
-from tools import TOOL_DEFINITIONS, execute_tool
+from tools import ALLOW_DOTFILES, TOOL_DEFINITIONS, execute_tool
+import tools as tools_mod
 
 app = typer.Typer(add_completion=False, help="ReAct — a local-first AI coding agent.")
 console = Console()
@@ -31,7 +32,8 @@ _FALLBACK_SYSTEM = (
     "You are a coding agent with tools. Output one of:\n"
     '  {"tool": "name", "args": {"arg": "value"}}  — then STOP\n'
     "  DONE: <final answer>\n"
-    "Tools: read_file(path), search_code(query). One call per turn."
+    "Tools: read_file(path), search_code(query), write_file(path, content), "
+    "edit_file(path, diff), undo(). One call per turn."
 )
 
 
@@ -42,7 +44,14 @@ class Agent:
         self.model = model
         self.client = ollama.Client()
         self.messages: list[dict] = []
-        self.files_in_context = 0
+        self.files_in_context: set[str] = set()
+        self.files_modified: set[str] = set()
+
+    def _status_text(self) -> str:
+        ctx = len(self.files_in_context)
+        mod = len(self.files_modified)
+        return (f"[cyan]Thinking ({self.model})  "
+                f"[dim]{ctx} files in context · {mod} modified[/dim]")
 
     def run(self, prompt: str, use_native: bool) -> None:
         """Run the agent loop until the model produces a final answer."""
@@ -53,11 +62,10 @@ class Agent:
         for iteration in range(1, MAX_ITERATIONS + 1):
             calls = self._chat(use_native)
             if not calls:
-                break  # final answer was streamed
+                break
             for call in calls:
                 self._execute_and_record(call)
         else:
-            # for/else: runs when the loop completes without break
             console.print(Panel(
                 f"[yellow]Reached the maximum of {MAX_ITERATIONS} iterations "
                 f"without the model finishing.[/yellow]\n"
@@ -66,11 +74,7 @@ class Agent:
             ))
 
     def _chat(self, use_native: bool) -> list[dict]:
-        """Stream a chat response; return tool calls or [].
-
-        Uses stream=True. Final answers are rendered token-by-token through a
-        Rich Live panel as they arrive. Tool calls are accumulated and returned.
-        """
+        """Stream a chat response; return tool calls or []."""
         kwargs = {"model": self.model, "messages": self.messages, "stream": True}
         if use_native:
             kwargs["tools"] = TOOL_DEFINITIONS
@@ -80,11 +84,7 @@ class Agent:
         live: Live | None = None
         live_parts: list[str] = []
 
-        status = Status(
-            f"[cyan]Thinking ({self.model})  "
-            f"[dim]{self.files_in_context} files in context[/dim]",
-            console=console, spinner="dots",
-        )
+        status = Status(self._status_text(), console=console, spinner="dots")
         status.start()
 
         try:
@@ -103,7 +103,6 @@ class Agent:
 
                 if content:
                     collected_content.append(content)
-                    # Stream final-answer tokens live as they arrive
                     if not accumulated_tool_calls:
                         if live is None:
                             status.stop()
@@ -119,7 +118,6 @@ class Agent:
             if live is not None:
                 live.stop()
 
-        # Append the full assistant message to the conversation log.
         full_msg = {"role": "assistant"}
         full_text = "".join(collected_content)
         if full_text:
@@ -134,16 +132,14 @@ class Agent:
                     fn = tc["function"]
                     console.print(f"  [yellow]→ {fn['name']}({json.dumps(fn.get('arguments', {}))})[/yellow]")
                 return accumulated_tool_calls
-            # Final answer was already streamed live token-by-token
             return []
 
-        # --- JSON fallback path ---
+        # JSON fallback
         if not full_text.strip():
             return []
 
         done_match = re.match(r"^DONE:\s*(.*)", full_text.strip(), re.DOTALL)
         if done_match:
-            # Already streamed the raw content; re-render the cleaned answer
             self._stream_markdown(done_match.group(1).strip())
             return []
 
@@ -161,26 +157,79 @@ class Agent:
                 continue
         return calls
 
+    def _confirm_write(self, name: str, args: dict) -> bool:
+        """Show a diff preview and ask for confirmation. Returns True if approved."""
+        path = args.get("path", "")
+        if name == "write_file":
+            content = args.get("content", "")
+            preview = Syntax(content[:2000], "text", theme="monokai", line_numbers=True)
+            console.print(Panel(preview, title=f"write_file → {path}", border_style="yellow"))
+        elif name == "edit_file":
+            diff = args.get("diff", "")
+            # Colorize simple +/- lines
+            colored = []
+            for line in diff.splitlines()[:80]:
+                if line.startswith("+") and not line.startswith("+++"):
+                    colored.append(f"[green]{line}[/green]")
+                elif line.startswith("-") and not line.startswith("---"):
+                    colored.append(f"[red]{line}[/red]")
+                else:
+                    colored.append(line)
+            console.print(Panel("\n".join(colored), title=f"edit_file → {path}", border_style="yellow"))
+        else:
+            return True
+
+        choice = Prompt.ask(
+            "[bold]Apply this change?[/bold]",
+            choices=["y", "n", "e", "a"],
+            default="n",
+            show_choices=True,
+        )
+        if choice == "y":
+            return True
+        if choice == "n":
+            console.print("[dim]Skipped.[/dim]")
+            return False
+        if choice == "a":
+            console.print("[red]Aborted.[/red]")
+            raise typer.Exit(code=0)
+        # "e" — let user edit the args manually (simple path for now)
+        if name == "write_file":
+            new_content = Prompt.ask("New content", default=args.get("content", ""))
+            args["content"] = new_content
+        elif name == "edit_file":
+            new_diff = Prompt.ask("New diff", default=args.get("diff", ""))
+            args["diff"] = new_diff
+        return True
+
     def _execute_and_record(self, call: dict) -> None:
-        """Execute a tool call and append its result to the conversation."""
-        if "function" in call:  # native format
+        """Execute a tool call (with confirmation for writes) and record result."""
+        if "function" in call:
             name = call["function"]["name"]
             args = call["function"].get("arguments", {})
-        else:  # JSON fallback format
+        else:
             name = call["tool"]
             args = call.get("args", {})
 
-        result = execute_tool(name, args)
-        if name == "read_file" and not result.startswith("[error]"):
-            self.files_in_context += 1
+        if name in ("write_file", "edit_file"):
+            if not self._confirm_write(name, args):
+                result = "[skipped] User declined the change."
+                self.messages.append({"role": "tool", "content": result})
+                return
 
-        preview = result[:200] + ("…" if len(result) > 200 else "")
+        result = execute_tool(name, args)
+
+        if name == "read_file" and not result.startswith("[error]"):
+            self.files_in_context.add(args.get("path", ""))
+        if name in ("write_file", "edit_file") and result.startswith("[ok]"):
+            self.files_modified.add(args.get("path", ""))
+
+        preview = result[:300] + ("…" if len(result) > 300 else "")
         console.print(Panel(preview, title=f"{name} result", border_style="green"))
         self.messages.append({"role": "tool", "content": result})
 
     def _stream_markdown(self, text: str) -> None:
-        """Render markdown through a Rich Live panel, streaming word-by-word.
-        Used as a fallback when the full answer is already collected."""
+        """Render markdown through a Rich Live panel (fallback path)."""
         words = text.split(" ")
         collected: list[str] = []
         with Live(refresh_per_second=15, console=console) as live:
@@ -210,7 +259,7 @@ def _resolve_model(requested: str | None) -> str:
                 return candidate
     except Exception:
         pass
-    return "llama3.2"  # let the next call fail with a clear message
+    return "llama3.2"
 
 
 def _model_supports_tools(model: str) -> bool:
@@ -225,10 +274,16 @@ def _model_supports_tools(model: str) -> bool:
 @app.command()
 def main(
     prompt: str = typer.Argument(..., help="The prompt to send to the local LLM."),
-    model: str = typer.Option(
-        None, "--model", "-m", help="Ollama model to use (default: auto-detect)."),
+    model: str = typer.Option(None, "--model", "-m", help="Ollama model to use."),
+    dangerously_allow_dotfiles: bool = typer.Option(
+        False, "--dangerously-allow-dotfiles",
+        help="Allow writes to dotfiles (.env, .git/*, etc.). Use with caution."),
 ) -> None:
-    """Send PROMPT to a local Ollama model with read-only tools (Phase 1)."""
+    """Send PROMPT to a local Ollama model with tools (Phase 1 + 2)."""
+    if dangerously_allow_dotfiles:
+        tools_mod.ALLOW_DOTFILES = True
+        console.print("[yellow]Warning: dotfile writes are enabled.[/yellow]")
+
     err = _check_ollama()
     if err:
         console.print(Panel(
