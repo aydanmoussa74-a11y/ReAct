@@ -48,6 +48,8 @@ react> /exit
 | `/model` | List recommended models and local status |
 | `/model <name>` | Switch to (and optionally download) a model |
 | `/commit` | Generate and apply a Conventional Commit from staged changes |
+| `/mcp status` | Show connected MCP servers and tools |
+| `/mcp reload` | Reload MCP config and reconnect |
 | `/undo` | Restore the most recent snapshot |
 | `/clear` | Clear conversation history (workspace unchanged) |
 | `/exit`, `/quit` | Exit the REPL |
@@ -119,6 +121,34 @@ Apply this change? [y/n/e/a]
 ### Self-healing
 
 If `run_command` returns a non-zero exit code the agent is automatically told to analyze the error, use `edit_file` to fix the code, and retry. The same command is auto-retried at most twice; after that the loop stops and asks for manual intervention.
+
+## Extending ReAct with MCP
+
+ReAct can load tools from external MCP servers (stdio transport).
+
+Create `~/.react/mcp_config.json`:
+
+```json
+{
+  "mcpServers": {
+    "fetch": {
+      "command": "uvx",
+      "args": ["mcp-server-fetch"]
+    },
+    "filesystem": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-filesystem", "/tmp"]
+    }
+  }
+}
+```
+
+In the REPL:
+
+- `/mcp status` — show connected servers and the tools they expose
+- `/mcp reload` — re-read the config and reconnect
+
+MCP tools are merged with ReAct’s built-in tools and routed automatically. If the `mcp` package is missing or a server fails to start, ReAct continues with local tools only.
 
 ## Development
 
