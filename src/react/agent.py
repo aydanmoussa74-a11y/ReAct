@@ -168,6 +168,25 @@ class Agent:
                 continue
         return calls
 
+    def _confirm_command(self, args: dict) -> bool:
+        cmd = str(args.get("cmd", "")).strip()
+        console.print(Panel(
+            f"[yellow]{cmd or '(empty command)'}[/yellow]\n"
+            "Commands run with shell interpretation disabled, but can still modify files or execute programs.",
+            title="Confirm command execution",
+            border_style="yellow",
+        ))
+        choice = Prompt.ask(
+            "[bold]Run this command?[/bold]",
+            choices=["y", "n"],
+            default="n",
+            show_choices=True,
+        )
+        if choice != "y":
+            console.print("[dim]Command skipped.[/dim]")
+            return False
+        return True
+
     def _confirm_write(self, name: str, args: dict) -> bool:
         path = args.get("path", "")
         if name == "write_file":
@@ -218,6 +237,9 @@ class Agent:
             if not self._confirm_write(name, args):
                 self.messages.append({"role": "tool", "content": "[skipped] User declined the change."})
                 return
+        if name == "run_command" and not self._confirm_command(args):
+            self.messages.append({"role": "tool", "content": "[skipped] User declined command execution."})
+            return
 
         if name == "run_command":
             cmd = args.get("cmd", "")
