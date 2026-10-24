@@ -45,11 +45,19 @@ react> /exit
 | Command | Action |
 |---------|--------|
 | `/help` | Show available commands |
+| `/model` | List recommended models and local status |
+| `/model <name>` | Switch to (and optionally download) a model |
 | `/undo` | Restore the most recent snapshot |
 | `/clear` | Clear conversation history (workspace unchanged) |
 | `/exit`, `/quit` | Exit the REPL |
 
 Ctrl+C during generation cancels the current turn and returns to the prompt.
+
+### Model switching
+
+`/model` shows recommended models and whether they are already downloaded.
+`/model <name>` switches the active model immediately if it is local.
+If it is not local, ReAct asks whether to download it, then switches after a successful pull.
 
 ### Flags
 
