@@ -205,6 +205,8 @@ class Agent:
                         console.print(f"  [yellow]→ {obj['tool']}({json.dumps(obj['args'])})[/yellow]")
             except json.JSONDecodeError:
                 continue
+        if not calls and self.on_event is not None and full_text.strip():
+            self._emit("assistant_message", text=full_text.strip())
         return calls
 
     def _confirm_command(self, args: dict) -> bool:
