@@ -1,6 +1,6 @@
 # ReAct
 
-Local-first AI coding agent that runs against Ollama.
+A phone-friendly AI coding agent with a local Ollama option and OpenRouter BYOK cloud access.
 
 It can read files, search code, write or edit files (with confirmation), run shell commands, and automatically try to fix failures.
 
@@ -10,7 +10,28 @@ It can read files, search code, write or edit files (with confirmation), run she
 pip install -r requirements.txt
 ```
 
-Requires Python 3.10+ and a running Ollama instance (`ollama serve`).
+Requires Python 3.10+. Choose a provider: Ollama for a reachable local server, or OpenRouter BYOK for cloud models without downloading model weights.
+
+## Provider setup
+
+### OpenRouter BYOK (works from Termux without a local model)
+
+1. Create an API key in your OpenRouter account: https://openrouter.ai/keys
+2. In Termux, set the key for the current shell session (replace the placeholder locally; never share it or commit it):
+
+   ```sh
+   export REACT_PROVIDER=openrouter
+   read -s -p 'OpenRouter API key: ' OPENROUTER_API_KEY; echo
+   export OPENROUTER_API_KEY
+   # Optional: choose a specific model ID from https://openrouter.ai/models
+   export REACT_MODEL=openrouter/auto
+   ```
+
+3. Run `react` or `react "explain this project"`.
+
+The key is read from the environment, the hidden prompt avoids putting it directly in shell history, and it is not written to the repository. Keep the key private. OpenRouter usage may cost money; check model pricing and account limits before using it. The current adapter uses ReAct's JSON-tool fallback mode and does not yet support native provider tool calls.
+
+For Ollama, keep `REACT_PROVIDER` unset (or set it to `ollama`) and make sure the Ollama server is reachable. A Python Ollama client alone is not the server.
 
 ## Usage
 
@@ -76,7 +97,7 @@ The flow is blocking and interactive, matching the write/edit confirmation style
 
 ### Flags
 
-- `--model` / `-m` — Ollama model (default: auto-detect llama3.2 or qwen2.5-coder)
+- `--model` / `-m` — model ID for the selected provider (Ollama model name or OpenRouter model ID)
 - `--dangerously-allow-dotfiles` — permit writes to hidden files (use carefully)
 
 ## Tools
@@ -195,6 +216,6 @@ Acode is useful for editing and browsing the source; run Python commands in Term
    react --help
    ```
 
-The test suite does not need an Ollama server. To use ReAct as an AI coding agent, a compatible Ollama server must also be running and reachable. Ollama is not installed by installing this Python package. On Android, first verify that you have a supported Ollama runtime available; otherwise use a trusted computer on your local network and configure the client to reach it. Do not expose an unauthenticated Ollama endpoint to the public internet.
+The test suite does not need a model server. On Android/Termux, select OpenRouter BYOK using the environment variables above to avoid requiring a local Ollama runtime. This uses the internet and may incur API charges. Alternatively, use a reachable Ollama server. Never expose an unauthenticated Ollama endpoint to the public internet.
 
 Command execution is deliberately confirmed in the interactive agent. Commands run without shell interpretation, high-risk executables are blocked, and command output is capped; this is a safety improvement, not a complete operating-system sandbox.

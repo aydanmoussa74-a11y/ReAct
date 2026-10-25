@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import subprocess
 
-import ollama
+from .providers import get_client, get_provider_name
 import typer
 from rich.console import Console
 from rich.panel import Panel
@@ -39,35 +39,39 @@ Ctrl+C cancels the current generation and returns to the prompt.
 """
 
 
-def _check_ollama() -> str | None:
+def _check_provider(provider: str) -> str | None:
     try:
-        ollama.Client().list()
+        get_client(provider).list()
         return None
     except Exception as exc:
         return str(exc)
 
 
-def _resolve_model(requested: str | None) -> str:
+def _resolve_model(requested: str | None, provider: str) -> str:
     if requested:
         return requested
-    client = ollama.Client()
+    if provider == "openrouter":
+        import os
+        return os.environ.get("REACT_MODEL", "openrouter/auto")
+    client = get_client(provider)
     try:
         models = client.list().get("models", [])
         for candidate in ("llama3.2", "qwen2.5-coder:7b"):
-            if any(m["model"] == candidate for m in models):
+            if any(m.get("model") == candidate for m in models):
                 return candidate
     except Exception:
         pass
     return "llama3.2"
 
 
-def _model_supports_tools(model: str) -> bool:
+def _model_supports_tools(model: str, provider: str = "ollama") -> bool:
+    if provider == "openrouter":
+        return False
     try:
-        info = json.dumps(ollama.Client().show(model)).lower()
+        info = json.dumps(get_client(provider).show(model)).lower()
         return "tools" in info or "tool" in info
     except Exception:
         return False
-
 
 def _handle_slash(cmd: str, agent: Agent) -> bool:
     """Handle a slash command. Return True if the REPL should exit."""
@@ -91,7 +95,7 @@ def _handle_slash(cmd: str, agent: Agent) -> bool:
         console.print(Panel(result, title="undo", border_style="green"))
         return False
     if name == "/model":
-        _handle_model(parts[1:] if len(parts) > 1 else [], agent)
+        _handle_model(parts[1:] if len(parts) > 1 else [], agent, agent.provider)
         return False
     if name == "/commit":
         _handle_commit(agent)
@@ -200,8 +204,16 @@ def _handle_commit(agent: Agent) -> None:
         console.print(Panel(output or "Unknown error", title="Commit failed", border_style="red"))
 
 
-def _handle_model(args: list[str], agent: Agent) -> None:
-    """List recommended models or switch the active model."""
+def _handle_model(args: list[str], agent: Agent, provider: str = "ollama") -> None:
+    """List or switch models for the active provider."""
+    if provider == "openrouter":
+        if not args:
+            console.print(f"[cyan]OpenRouter model:[/cyan] {agent.model}")
+            console.print("[dim]Use /model <provider/model-id> to switch. See https://openrouter.ai/models for model IDs.[/dim]")
+            return
+        agent.model = args[0]
+        console.print(f"[green]Switched to OpenRouter model {agent.model}.[/green]")
+        return
     local = set(get_local_models())
     if not args:
         table = Table(title="Recommended Models", show_header=True, header_style="bold cyan")
@@ -253,7 +265,7 @@ def _repl(agent: Agent, use_native: bool) -> None:
             continue
         try:
             # Re-detect capabilities after /model switches the active model.
-            agent.run(line, use_native=_model_supports_tools(agent.model))
+            agent.run(line, use_native=_model_supports_tools(agent.model, agent.provider))
         except KeyboardInterrupt:
             console.print("\n[yellow]Generation cancelled.[/yellow]")
             continue
@@ -264,29 +276,35 @@ def _repl(agent: Agent, use_native: bool) -> None:
 @app.command()
 def main(
     prompt: str = typer.Argument(None, help="Optional prompt. Omit to enter interactive REPL."),
-    model: str = typer.Option(None, "--model", "-m", help="Ollama model to use."),
+    model: str = typer.Option(None, "--model", "-m", help="Model ID for the selected provider."),
     dangerously_allow_dotfiles: bool = typer.Option(
         False, "--dangerously-allow-dotfiles",
         help="Allow writes to dotfiles. Use with caution."),
 ) -> None:
-    """Send a prompt to a local Ollama model, or start an interactive session."""
+    """Send a prompt to the configured AI provider, or start an interactive session."""
+    try:
+        provider = get_provider_name()
+    except Exception as exc:
+        console.print(Panel(f"[red]{exc}[/red]", title="Provider configuration error"))
+        raise typer.Exit(1)
     if dangerously_allow_dotfiles:
         utils_mod.ALLOW_DOTFILES = True
         console.print("[yellow]Warning: dotfile writes are enabled.[/yellow]")
 
-    err = _check_ollama()
+    err = _check_provider(provider)
     if err:
+        hint = "Set OPENROUTER_API_KEY and check your account/network." if provider == "openrouter" else "Start it with `ollama serve`."
         console.print(Panel(
-            f"[red]Could not connect to Ollama:[/red]\n{err}\n\nStart it with `ollama serve`.",
+            f"[red]Could not initialize {provider}:[/red]\n{err}\n\n{hint}",
             title="Connection error",
         ))
         raise typer.Exit(1)
 
-    active_model = _resolve_model(model)
-    use_native = _model_supports_tools(active_model)
+    active_model = _resolve_model(model, provider)
+    use_native = _model_supports_tools(active_model, provider)
     console.print(f"[dim]Tool mode: {'native' if use_native else 'JSON fallback'}[/dim]")
 
-    agent = Agent(active_model)
+    agent = Agent(active_model, provider=provider)
 
     if prompt is None:
         _repl(agent, use_native)
