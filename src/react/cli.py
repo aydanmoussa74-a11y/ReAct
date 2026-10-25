@@ -277,11 +277,17 @@ def _repl(agent: Agent, use_native: bool) -> None:
 def main(
     prompt: str = typer.Argument(None, help="Optional prompt. Omit to enter interactive REPL."),
     model: str = typer.Option(None, "--model", "-m", help="Model ID for the selected provider."),
+    classic: bool = typer.Option(False, "--classic", help="Use the legacy Rich REPL instead of the full-screen TUI."),
     dangerously_allow_dotfiles: bool = typer.Option(
         False, "--dangerously-allow-dotfiles",
         help="Allow writes to dotfiles. Use with caution."),
 ) -> None:
     """Send a prompt to the configured AI provider, or start an interactive session."""
+    if prompt is None and not classic:
+        from .tui import ReActTUI
+        ReActTUI().run()
+        return
+
     try:
         provider = get_provider_name()
     except Exception as exc:
