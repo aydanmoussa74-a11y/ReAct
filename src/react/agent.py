@@ -142,9 +142,7 @@ class Agent:
                 if content:
                     collected.append(content)
                     if not tool_calls:
-                        if self.on_event is not None:
-                            self._emit("assistant_delta", text=content)
-                        else:
+                        if self.on_event is None:
                             if live is None:
                                 if status:
                                     status.stop()
