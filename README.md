@@ -45,7 +45,7 @@ react
 python -m react.cli
 ```
 
-Use `react --classic` to open the legacy Rich REPL. The first TUI milestone includes local `/help`, `/status`, `/clear`, and `/exit` commands, plus `@` project-file suggestions. The agent execution bridge and provider setup inside the TUI are not implemented yet; the screen does not fabricate AI responses.
+Use `react --classic` to open the legacy Rich REPL. The TUI runs real agent turns in a background worker, shows model responses/tool activity/errors, and routes file-write/edit and command approvals through `/approve` and `/deny`. Approval waits time out to denial. Use `@path/to/file.py` in a prompt to include a project-contained text file (up to 50 KB) in the model context. No provider request occurs until you submit a task.
 
 ### One-shot
 
@@ -57,12 +57,12 @@ react "create a notes.md summarizing this project"
 
 ### Interactive REPL
 
-Run with no arguments to enter a persistent session. Conversation history and file context are kept across turns.
+Run with `--classic` to enter the legacy persistent Rich REPL. Conversation history and file context are kept across turns.
 
 ```bash
-react
+react --classic
 # or
-python -m react.cli
+python -m react.cli --classic
 ```
 
 ```
@@ -145,11 +145,7 @@ The map is only an index. The agent is instructed to follow Map → Investigate 
 
 ### Confirmation
 
-Before any write or edit the CLI shows a preview and asks:
-
-```
-Apply this change? [y/n/e/a]
-```
+Before any write/edit or command execution, the CLI asks for confirmation. In the Textual interface, inspect the displayed preview and enter `/approve` or `/deny`; waiting three minutes defaults to denial. The classic CLI uses its interactive confirmation prompt.
 
 ### Self-healing
 
