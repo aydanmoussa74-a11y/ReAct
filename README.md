@@ -35,6 +35,18 @@ For Ollama, keep `REACT_PROVIDER` unset (or set it to `ollama`) and make sure th
 
 ## Usage
 
+### Full-screen terminal interface
+
+Run with no arguments to open the Textual workspace:
+
+```bash
+react
+# or
+python -m react.cli
+```
+
+Use `react --classic` to open the legacy Rich REPL. The first TUI milestone includes local `/help`, `/status`, `/clear`, and `/exit` commands, plus `@` project-file suggestions. The agent execution bridge and provider setup inside the TUI are not implemented yet; the screen does not fabricate AI responses.
+
 ### One-shot
 
 ```bash
