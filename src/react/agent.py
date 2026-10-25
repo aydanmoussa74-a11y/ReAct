@@ -53,7 +53,16 @@ _NATIVE_SYSTEM = _FALLBACK_SYSTEM.replace(
 
 
 class Agent:
-    def __init__(self, model: str, provider: str = "ollama") -> None:
+    def __init__(
+        self,
+        model: str,
+        provider: str = "ollama",
+        *,
+        on_event=None,
+        approve=None,
+    ) -> None:
+        self.on_event = on_event
+        self.approve = approve
         self.model = model
         self.provider = provider
         # Keep the Ollama client exposed here for backwards-compatible tests
@@ -64,12 +73,18 @@ class Agent:
         self.files_modified: set[str] = set()
         self._cmd_retries: dict[str, int] = {}
 
+    def _emit(self, event: str, **data) -> None:
+        """Send optional structured progress events to a host UI."""
+        if self.on_event is not None:
+            self.on_event(event, data)
+
     def _status_text(self) -> str:
         return (f"[cyan]Thinking ({self.model})  "
                 f"[dim]{len(self.files_in_context)} files in context · "
                 f"{len(self.files_modified)} modified[/dim]")
 
     def run(self, prompt: str, use_native: bool) -> None:
+        self._emit("turn_started", prompt=prompt, model=self.model, provider=self.provider)
         system_prompt = _NATIVE_SYSTEM if use_native else _FALLBACK_SYSTEM
         if self.messages and self.messages[0].get("role") == "system":
             self.messages[0]["content"] = system_prompt
@@ -84,11 +99,12 @@ class Agent:
             for call in calls:
                 self._execute_and_record(call)
         else:
-            console.print(Panel(
-                f"[yellow]Reached the maximum of {MAX_ITERATIONS} iterations "
-                f"without the model finishing.[/yellow]",
-                title="Max iterations",
-            ))
+            message = f"Reached the maximum of {MAX_ITERATIONS} iterations without the model finishing."
+            if self.on_event is not None:
+                self._emit("error", message=message)
+            else:
+                console.print(Panel(f"[yellow]{message}[/yellow]", title="Max iterations"))
+        self._emit("turn_finished", files_in_context=sorted(self.files_in_context), files_modified=sorted(self.files_modified))
 
     def _chat(self, use_native: bool) -> list[dict]:
         kwargs = {"model": self.model, "messages": self.messages, "stream": True}
@@ -105,8 +121,12 @@ class Agent:
         live: Live | None = None
         live_parts: list[str] = []
 
-        status = Status(self._status_text(), console=console, spinner="dots")
-        status.start()
+        status = None
+        if self.on_event is None:
+            status = Status(self._status_text(), console=console, spinner="dots")
+            status.start()
+        else:
+            self._emit("status", message=f"Thinking with {self.model}…")
         try:
             stream = self.client.chat(**kwargs)
             chunks = [stream] if isinstance(stream, dict) else stream
@@ -122,16 +142,21 @@ class Agent:
                 if content:
                     collected.append(content)
                     if not tool_calls:
-                        if live is None:
-                            status.stop()
-                            live = Live(console=console, refresh_per_second=20)
-                            live.start()
-                        live_parts.append(content)
-                        live.update(Markdown("".join(live_parts)))
+                        if self.on_event is not None:
+                            self._emit("assistant_delta", text=content)
+                        else:
+                            if live is None:
+                                if status:
+                                    status.stop()
+                                live = Live(console=console, refresh_per_second=20)
+                                live.start()
+                            live_parts.append(content)
+                            live.update(Markdown("".join(live_parts)))
                 if chunk.get("done"):
                     break
         finally:
-            status.stop()
+            if status:
+                status.stop()
             if live:
                 live.stop()
 
@@ -147,15 +172,25 @@ class Agent:
             if tool_calls:
                 for tc in tool_calls:
                     fn = tc["function"]
-                    console.print(f"  [yellow]→ {fn['name']}({json.dumps(fn.get('arguments', {}))})[/yellow]")
+                    self._emit("tool_call", name=fn["name"], args=fn.get("arguments", {}))
+                    if self.on_event is None:
+                        console.print(f"  [yellow]→ {fn['name']}({json.dumps(fn.get('arguments', {}))})[/yellow]")
+                if self.on_event is not None and full_text:
+                    self._emit("assistant_message", text=full_text)
                 return tool_calls
+            if self.on_event is not None and full_text:
+                self._emit("assistant_message", text=full_text)
             return []
 
         if not full_text.strip():
             return []
         done_match = re.match(r"^DONE:\s*(.*)", full_text.strip(), re.DOTALL)
         if done_match:
-            self._stream_markdown(done_match.group(1).strip())
+            answer = done_match.group(1).strip()
+            if self.on_event is not None:
+                self._emit("assistant_message", text=answer)
+            else:
+                self._stream_markdown(answer)
             return []
 
         calls: list[dict] = []
@@ -167,7 +202,9 @@ class Agent:
                 obj = json.loads(line)
                 if isinstance(obj, dict) and "tool" in obj and "args" in obj:
                     calls.append(obj)
-                    console.print(f"  [yellow]→ {obj['tool']}({json.dumps(obj['args'])})[/yellow]")
+                    self._emit("tool_call", name=obj["tool"], args=obj["args"])
+                    if self.on_event is None:
+                        console.print(f"  [yellow]→ {obj['tool']}({json.dumps(obj['args'])})[/yellow]")
             except json.JSONDecodeError:
                 continue
         return calls
@@ -237,13 +274,18 @@ class Agent:
             name = call["tool"]
             args = call.get("args", {})
 
+        self._emit("tool_started", name=name, args=args)
         if name in ("write_file", "edit_file"):
-            if not self._confirm_write(name, args):
+            allowed = self.approve(name, args) if self.approve is not None else self._confirm_write(name, args)
+            if not allowed:
                 self.messages.append({"role": "tool", "content": "[skipped] User declined the change."})
                 return
-        if name == "run_command" and not self._confirm_command(args):
-            self.messages.append({"role": "tool", "content": "[skipped] User declined command execution."})
-            return
+        if name == "run_command":
+            allowed = self.approve(name, args) if self.approve is not None else self._confirm_command(args)
+            if not allowed:
+                self.messages.append({"role": "tool", "content": "[skipped] User declined command execution."})
+                self._emit("approval_denied", name=name, args=args)
+                return
 
         if name == "run_command":
             cmd = args.get("cmd", "")
@@ -265,6 +307,7 @@ class Agent:
             console.print(Panel(preview, title=f"{name} result", border_style="green"))
 
         self.messages.append({"role": "tool", "content": result})
+        self._emit("tool_result", name=name, args=args, result=result)
 
         if name == "run_command" and "Exit Code: 0" not in result and not result.startswith("[error]"):
             cmd = args.get("cmd", "")
@@ -278,12 +321,14 @@ class Agent:
                         "then try the command again."
                     ),
                 })
-                console.print("[yellow]Self-heal: asking model to fix and retry...[/yellow]")
+                self._emit("status", message="Command failed; asking the model to diagnose and retry.")
+                if self.on_event is None:
+                    console.print("[yellow]Self-heal: asking model to fix and retry...[/yellow]")
             else:
-                console.print(Panel(
-                    f"[red]Command failed twice: {cmd}\nManual intervention required.[/red]",
-                    title="Self-heal limit reached",
-                ))
+                message = f"Command failed twice: {cmd}\nManual intervention required."
+                self._emit("error", message=message)
+                if self.on_event is None:
+                    console.print(Panel(f"[red]{message}[/red]", title="Self-heal limit reached"))
 
     def _stream_markdown(self, text: str) -> None:
         words = text.split(" ")
