@@ -133,8 +133,8 @@ class ReActTUI(App):
         self._apply_layout()
 
     def _apply_layout(self) -> None:
+        # Keep the welcome content stable across resizes; only collapse the sidebar.
         self.query_one("#sidebar").display = self.size.width >= 90
-        self.query_one("#welcome").display = self.query_one("#conversation", RichLog).lines == 0
 
     def on_input_changed(self, event: Input.Changed) -> None:
         value = event.value
