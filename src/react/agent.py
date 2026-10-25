@@ -279,6 +279,7 @@ class Agent:
             allowed = self.approve(name, args) if self.approve is not None else self._confirm_write(name, args)
             if not allowed:
                 self.messages.append({"role": "tool", "content": "[skipped] User declined the change."})
+                self._emit("approval_denied", name=name, args=args)
                 return
         if name == "run_command":
             allowed = self.approve(name, args) if self.approve is not None else self._confirm_command(args)
@@ -289,7 +290,11 @@ class Agent:
 
         if name == "run_command":
             cmd = args.get("cmd", "")
-            with Status(f"[cyan]Running: {cmd}[/cyan]", console=console, spinner="dots"):
+            if self.on_event is None:
+                with Status(f"[cyan]Running: {cmd}[/cyan]", console=console, spinner="dots"):
+                    result = execute_tool(name, args)
+            else:
+                self._emit("status", message=f"Running command: {cmd}")
                 result = execute_tool(name, args)
         else:
             result = execute_tool(name, args)
@@ -299,12 +304,13 @@ class Agent:
         if name in ("write_file", "edit_file") and result.startswith("[ok]"):
             self.files_modified.add(args.get("path", ""))
 
-        if name == "run_command" and "Exit Code: 0" not in result and not result.startswith("[error]"):
-            stderr = result.split("STDERR:", 1)[1].strip() if "STDERR:" in result else result
-            console.print(Panel(stderr or result, title="STDERR", border_style="red"))
-        else:
-            preview = result[:300] + ("…" if len(result) > 300 else "")
-            console.print(Panel(preview, title=f"{name} result", border_style="green"))
+        if self.on_event is None:
+            if name == "run_command" and "Exit Code: 0" not in result and not result.startswith("[error]"):
+                stderr = result.split("STDERR:", 1)[1].strip() if "STDERR:" in result else result
+                console.print(Panel(stderr or result, title="STDERR", border_style="red"))
+            else:
+                preview = result[:300] + ("…" if len(result) > 300 else "")
+                console.print(Panel(preview, title=f"{name} result", border_style="green"))
 
         self.messages.append({"role": "tool", "content": result})
         self._emit("tool_result", name=name, args=args, result=result)
