@@ -7,10 +7,12 @@ AI turn ran before the agent event bridge is implemented.
 from __future__ import annotations
 
 from pathlib import Path
+import threading
 
 from rich.text import Text
 from textual.app import App, ComposeResult
 from textual.containers import Horizontal, Vertical
+from textual.message import Message
 from textual.widgets import Footer, Input, RichLog, Static
 
 AMBER = "#ffbd59"
@@ -19,10 +21,22 @@ COMMANDS = [
     ("/help", "Show commands"),
     ("/status", "Show interface/provider status"),
     ("/clear", "Clear conversation display"),
-    ("/connect", "Provider setup (not implemented in TUI yet)"),
-    ("/model", "Model selection (not implemented in TUI yet)"),
+    ("/connect", "Show provider configuration"),
+    ("/model", "Show active model"),
+    ("/approve", "Approve the pending write/command"),
+    ("/deny", "Deny the pending write/command"),
     ("/exit", "Close ReAct"),
 ]
+
+class ApprovalRequested(Message):
+    """UI-thread message for an agent action that needs user approval."""
+
+    def __init__(self, name: str, args: dict, decision: threading.Event, result: dict):
+        super().__init__()
+        self.name = name
+        self.args = args
+        self.decision = decision
+        self.result = result
 
 
 def project_files(root: Path, limit: int = 80) -> list[str]:
@@ -87,6 +101,16 @@ class ReActTUI(App):
         ("ctrl+c", "quit", "Quit"),
     ]
 
+    def __init__(self):
+        super().__init__()
+        self.agent = None
+        self.provider = "unconfigured"
+        self.model = "unresolved"
+        self.use_native = False
+        self.busy = False
+        self.pending_approval = None
+        self.last_error = None
+
     def compose(self) -> ComposeResult:
         with Horizontal(id="topbar"):
             yield Static("◆  ReAct", id="brand")
@@ -104,14 +128,14 @@ class ReActTUI(App):
                 yield Static("Context via @", classes="side-item")
                 yield Static("─" * 17, classes="side-item")
                 yield Static("PROVIDER", classes="section-label")
-                yield Static("Not connected in TUI", classes="side-item")
+                yield Static("Detecting on first request", classes="side-item", id="provider-sidebar")
                 yield Static("No API call on startup", classes="side-item")
             with Vertical(id="main"):
                 yield Static("New session  /  ReAct", id="conversation-title")
                 yield Static(
                     "BUILD WITH INTENT\n"
                     "Inspect the code. Plan the change. Review the evidence. Keep control.\n\n"
-                    "Type / to explore workspace commands, or @ to reference project files.",
+                    "Describe a task to start the agent. Use @path/to/file.py to include file context.",
                     id="welcome",
                 )
                 yield RichLog(id="conversation", wrap=True, markup=False)
@@ -119,15 +143,13 @@ class ReActTUI(App):
                 with Vertical(id="input-area"):
                     yield Static("MESSAGE REACT", id="prompt-label")
                     yield Input(placeholder="Describe what you want to build...", id="command-input")
-                    yield Static("Enter: submit  •  / commands  •  @ project context  •  Ctrl+L: clear", id="hint")
+                    yield Static("Enter: submit  •  / commands  •  @file context  •  /approve or /deny", id="hint")
         yield Footer()
 
     def on_mount(self) -> None:
         self._apply_layout()
         self.query_one("#command-input", Input).focus()
-        self.query_one("#conversation", RichLog).write(
-            Text("Agent execution is not connected to this screen yet. No response will be simulated.", style=MUTED)
-        )
+        self.query_one("#conversation", RichLog).write(Text("Ready. Provider initializes when you submit your first task.", style=MUTED))
 
     def on_resize(self, event) -> None:
         self._apply_layout()
@@ -142,7 +164,7 @@ class ReActTUI(App):
         if value.startswith("/"):
             matches = [(cmd, desc) for cmd, desc in COMMANDS if cmd.startswith(value.split()[0])]
             if matches:
-                panel.update("\n".join(f"{cmd:<12} {desc}" for cmd, desc in matches[:5]))
+                panel.update("   ".join(cmd for cmd, _ in matches[:3]))
                 panel.display = True
                 return
         if "@" in value:
@@ -163,51 +185,187 @@ class ReActTUI(App):
         self.query_one("#suggestions", Static).display = False
         if not value:
             return
-
         log = self.query_one("#conversation", RichLog)
         self.query_one("#welcome").display = False
         log.write(Text(f"\nYOU  ›  {value}", style="bold white"))
-
-        if value == "/exit" or value == "/quit":
+        if value in ("/exit", "/quit"):
+            self._deny_pending()
             self.exit()
         elif value == "/help":
-            log.write(Text("\n".join(f"{cmd:<12} {desc}" for cmd, desc in COMMANDS), style=AMBER))
+            log.write(Text("\n".join(f"{cmd:<10} {desc}" for cmd, desc in COMMANDS), style=AMBER))
         elif value == "/clear":
+            if self.busy:
+                self._append_log("Wait for the current task to finish before clearing history.")
+                return
+            if self.agent:
+                self.agent.messages.clear()
+                self.agent.files_in_context.clear()
+                self.agent.files_modified.clear()
+                self.agent._cmd_retries.clear()
             log.clear()
-            log.write(Text("Conversation display cleared.", style=MUTED))
+            self._append_log("Conversation and agent history cleared.")
         elif value == "/status":
-            log.write(Text(
-                "UI: running\nProvider: not connected in this TUI milestone\n"
-                "Agent bridge: not implemented yet\nNetwork request: none",
-                style=MUTED,
-            ))
+            self._append_log(f"Agent: {'busy' if self.busy else 'ready'}\nProvider: {self.provider}\nModel: {self.model}\nTool mode: {'native' if self.use_native else 'JSON fallback'}\nPending approval: {'yes' if self.pending_approval else 'no'}")
+        elif value == "/connect":
+            self._append_log("Provider uses REACT_PROVIDER=ollama or openrouter. OpenRouter needs OPENROUTER_API_KEY and optionally REACT_MODEL before launch. This UI never displays or stores your API key.")
+        elif value.startswith("/model"):
+            self._append_log(f"Active model: {self.model}. Runtime switching is not available yet; use the classic CLI to change it.")
+        elif value == "/approve":
+            self._decide_approval(True)
+        elif value == "/deny":
+            self._decide_approval(False)
         elif value.startswith("/"):
-            log.write(Text("This command is not implemented in the TUI yet. Use /help.", style=MUTED))
+            self._append_log("Unknown command. Type /help.")
+        elif self.pending_approval is not None:
+            self._append_log("Resolve the pending approval with /approve or /deny first.", AMBER)
+        elif self.busy:
+            self._append_log("Agent is still working. Wait for this turn to finish.", AMBER)
         else:
-            refs = [part[1:].strip(".,:;!?()[]{}") for part in value.split() if part.startswith("@")]
-            if refs:
-                root = Path.cwd().resolve()
-                found = []
-                for ref in refs:
-                    candidate = (root / ref).resolve()
-                    if candidate == root or root in candidate.parents:
-                        if candidate.is_file():
-                            found.append(ref)
-                log.write(Text(
-                    "Context references found: " + (", ".join("@" + item for item in found) if found else "none"),
-                    style=AMBER if found else MUTED,
-                ))
-            log.write(Text(
-                "Captured by the interface only. The agent bridge is the next integration step; "
-                "no AI response has been fabricated.",
-                style=MUTED,
-            ))
+            prompt, note = self._expand_file_context(value)
+            if note:
+                self._append_log(note, AMBER)
+            self._start_agent(prompt)
         log.scroll_end(animate=False)
 
+    def _expand_file_context(self, prompt: str) -> tuple[str, str]:
+        root = Path.cwd().resolve()
+        included, notes = [], []
+        refs = [p[1:].strip(".,:;!?()[]{}") for p in prompt.split() if p.startswith("@")]
+        for ref in refs:
+            candidate = (root / ref).resolve()
+            if candidate != root and root in candidate.parents and candidate.is_file():
+                try:
+                    if candidate.stat().st_size > 50 * 1024:
+                        notes.append(f"@{ref} skipped: file exceeds 50 KB")
+                        continue
+                    included.append(f"--- FILE: {ref} ---\n{candidate.read_text(encoding='utf-8')}\n--- END FILE ---")
+                except (OSError, UnicodeDecodeError) as exc:
+                    notes.append(f"@{ref} could not be read: {exc}")
+            else:
+                notes.append(f"@{ref} not found or outside project")
+        if included:
+            prompt += "\n\nUser-referenced project context (read-only):\n" + "\n\n".join(included)
+            notes.append(f"Included {len(included)} file(s) in model prompt")
+        return prompt, " • ".join(notes)
+
+    def _start_agent(self, prompt: str) -> None:
+        self.busy = True
+        self.last_error = None
+        self.query_one("#connection", Static).update("● WORKING")
+        self.query_one("#prompt-label", Static).update("AGENT WORKING")
+        self.run_worker(self._agent_turn, prompt, thread=True, exclusive=True, name="react-agent-turn")
+
+    def _agent_turn(self, prompt: str) -> None:
+        try:
+            from .agent import Agent
+            from .cli import _model_supports_tools, _resolve_model
+            from .providers import get_provider_name
+            provider = get_provider_name()
+            model = _resolve_model(None, provider)
+            native = _model_supports_tools(model, provider)
+            self.provider, self.model, self.use_native = provider, model, native
+            if self.agent is None or self.agent.provider != provider or self.agent.model != model:
+                self.agent = Agent(model, provider=provider, on_event=self._agent_event, approve=self._request_approval)
+            else:
+                self.agent.on_event = self._agent_event
+                self.agent.approve = self._request_approval
+            self.call_from_thread(self._set_provider_status, provider, model, native)
+            self.agent.run(prompt, use_native=native)
+        except Exception as exc:
+            self.last_error = f"{type(exc).__name__}: {exc}"
+            self.call_from_thread(self._append_log, f"Agent error: {self.last_error}", "bold red")
+        finally:
+            self.call_from_thread(self._finish_turn)
+
+    def _agent_event(self, event: str, data: dict) -> None:
+        self.call_from_thread(self._render_agent_event, event, data)
+
+    def _render_agent_event(self, event: str, data: dict) -> None:
+        if event == "status":
+            self._append_log(" • " + str(data.get("message", "")))
+        elif event == "assistant_delta":
+            self.query_one("#conversation", RichLog).write(Text(str(data.get("text", "")), style="white"))
+        elif event == "assistant_message":
+            text = str(data.get("text", "")).strip()
+            if text:
+                self._append_log("REACT › " + text, "white")
+        elif event == "tool_call":
+            args = str(data.get("args", {}))
+            self._append_log(f"⚙ {data.get('name')} {args[:180]}", AMBER)
+        elif event == "tool_started":
+            self._append_log(f"Running {data.get('name')}…", AMBER)
+        elif event == "tool_result":
+            result = str(data.get("result", ""))
+            self._append_log(f"Result · {data.get('name')}\n{result[:700]}")
+        elif event == "approval_denied":
+            self._append_log(f"Denied · {data.get('name')}", AMBER)
+        elif event == "error":
+            self._append_log("Agent warning: " + str(data.get("message", "")), "bold red")
+        self.query_one("#conversation", RichLog).scroll_end(animate=False)
+
+    def _request_approval(self, name: str, args: dict) -> bool:
+        decision = threading.Event()
+        result = {"approved": False}
+        request = ApprovalRequested(name, args, decision, result)
+        self.call_from_thread(self.post_message, request)
+        decision.wait(timeout=180)
+        return bool(result["approved"])
+
+    def on_approval_requested(self, event: ApprovalRequested) -> None:
+        if self.pending_approval is not None:
+            event.decision.set()
+            return
+        self.pending_approval = event
+        args = event.args
+        if event.name == "write_file":
+            detail = f"Path: {args.get('path', '')}\nContent:\n{str(args.get('content', ''))[:1000]}"
+        elif event.name == "edit_file":
+            detail = f"Path: {args.get('path', '')}\nDiff:\n{str(args.get('diff', ''))[:1000]}"
+        else:
+            detail = f"Command: {args.get('cmd', '')}\nCommands may run programs or modify files."
+        self._append_log("APPROVAL REQUIRED — review before allowing:\n" + detail + "\nType /approve or /deny. Timeout defaults to deny.", "bold yellow")
+        self.query_one("#prompt-label", Static).update("APPROVAL REQUIRED · /approve or /deny")
+
+    def _decide_approval(self, approved: bool) -> None:
+        request = self.pending_approval
+        if request is None:
+            self._append_log("No pending approval.")
+            return
+        request.result["approved"] = approved
+        request.decision.set()
+        self.pending_approval = None
+        self._append_log(("Approved: " if approved else "Denied: ") + request.name, "bold green" if approved else "bold yellow")
+        self.query_one("#prompt-label", Static).update("AGENT WORKING")
+
+    def _deny_pending(self) -> None:
+        if self.pending_approval is not None:
+            self._decide_approval(False)
+
+    def _set_provider_status(self, provider: str, model: str, native: bool) -> None:
+        self.query_one("#connection", Static).update("● CONNECTED")
+        self.query_one("#provider-sidebar", Static).update(f"{provider} · {model}")
+        self._append_log(f"Provider: {provider} · Model: {model} · Tool mode: {'native' if native else 'JSON fallback'}")
+
+    def _finish_turn(self) -> None:
+        self.busy = False
+        self.query_one("#connection", Static).update("● ERROR" if self.last_error else "● READY")
+        self.query_one("#prompt-label", Static).update("MESSAGE REACT")
+        self.query_one("#command-input", Input).focus()
+
+    def _append_log(self, message: str, style: str = MUTED) -> None:
+        self.query_one("#conversation", RichLog).write(Text(message, style=style))
+
     def action_clear_chat(self) -> None:
+        if self.busy:
+            self._append_log("Wait for the current task to finish before clearing.")
+            return
         log = self.query_one("#conversation", RichLog)
         log.clear()
         self.query_one("#welcome").display = True
+
+    def action_quit(self) -> None:
+        self._deny_pending()
+        self.exit()
 
 
 if __name__ == "__main__":
