@@ -308,7 +308,10 @@ class ReActTUI(App):
         result = {"approved": False}
         request = ApprovalRequested(name, args, decision, result)
         self.call_from_thread(self.post_message, request)
-        decision.wait(timeout=180)
+        decided = decision.wait(timeout=180)
+        if not decided:
+            self.call_from_thread(self._clear_expired_approval, request)
+            return False
         return bool(result["approved"])
 
     def on_approval_requested(self, event: ApprovalRequested) -> None:
@@ -325,6 +328,12 @@ class ReActTUI(App):
             detail = f"Command: {args.get('cmd', '')}\nCommands may run programs or modify files."
         self._append_log("APPROVAL REQUIRED — review before allowing:\n" + detail + "\nType /approve or /deny. Timeout defaults to deny.", "bold yellow")
         self.query_one("#prompt-label", Static).update("APPROVAL REQUIRED · /approve or /deny")
+
+    def _clear_expired_approval(self, request: ApprovalRequested) -> None:
+        if self.pending_approval is request:
+            self.pending_approval = None
+            self._append_log("Approval timed out; action was denied.", "bold yellow")
+            self.query_one("#prompt-label", Static).update("AGENT WORKING")
 
     def _decide_approval(self, approved: bool) -> None:
         request = self.pending_approval
