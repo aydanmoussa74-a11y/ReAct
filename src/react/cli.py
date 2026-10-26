@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import subprocess
 
-from .providers import get_client, get_provider_name
+from .providers import CLOUD_DEFAULT_MODELS, get_client, get_provider_name
 import typer
 from rich.console import Console
 from rich.panel import Panel
@@ -50,9 +50,9 @@ def _check_provider(provider: str) -> str | None:
 def _resolve_model(requested: str | None, provider: str) -> str:
     if requested:
         return requested
-    if provider == "openrouter":
+    if provider in CLOUD_DEFAULT_MODELS:
         import os
-        return os.environ.get("REACT_MODEL", "openrouter/auto")
+        return os.environ.get("REACT_MODEL", CLOUD_DEFAULT_MODELS[provider])
     client = get_client(provider)
     try:
         models = client.list().get("models", [])
@@ -65,7 +65,7 @@ def _resolve_model(requested: str | None, provider: str) -> str:
 
 
 def _model_supports_tools(model: str, provider: str = "ollama") -> bool:
-    if provider == "openrouter":
+    if provider in CLOUD_DEFAULT_MODELS:
         return False
     try:
         info = json.dumps(get_client(provider).show(model)).lower()
@@ -206,13 +206,18 @@ def _handle_commit(agent: Agent) -> None:
 
 def _handle_model(args: list[str], agent: Agent, provider: str = "ollama") -> None:
     """List or switch models for the active provider."""
-    if provider == "openrouter":
+    if provider in CLOUD_DEFAULT_MODELS:
         if not args:
-            console.print(f"[cyan]OpenRouter model:[/cyan] {agent.model}")
-            console.print("[dim]Use /model <provider/model-id> to switch. See https://openrouter.ai/models for model IDs.[/dim]")
+            console.print(f"[cyan]{provider.title()} model:[/cyan] {agent.model}")
+            links = {
+                "openrouter": "https://openrouter.ai/models",
+                "openai": "https://platform.openai.com/docs/models",
+                "gemini": "https://ai.google.dev/gemini-api/docs/models",
+            }
+            console.print(f"[dim]Use /model <model-id> to switch. Model list: {links[provider]}[/dim]")
             return
         agent.model = args[0]
-        console.print(f"[green]Switched to OpenRouter model {agent.model}.[/green]")
+        console.print(f"[green]Switched to {provider.title()} model {agent.model}.[/green]")
         return
     local = set(get_local_models())
     if not args:
@@ -293,7 +298,13 @@ def main(
 
     err = _check_provider(provider)
     if err:
-        hint = "Set OPENROUTER_API_KEY and check your account/network." if provider == "openrouter" else "Start it with `ollama serve`."
+        hints = {
+            "ollama": "Start a reachable Ollama server, or select a hosted provider.",
+            "openrouter": "Set OPENROUTER_API_KEY and check your account/network.",
+            "openai": "Set OPENAI_API_KEY and check your OpenAI API account and usage limits.",
+            "gemini": "Set GEMINI_API_KEY from https://aistudio.google.com/ and check your API quota.",
+        }
+        hint = hints.get(provider, "Check your provider configuration and network.")
         console.print(Panel(
             f"[red]Could not initialize {provider}:[/red]\n{err}\n\n{hint}",
             title="Connection error",
