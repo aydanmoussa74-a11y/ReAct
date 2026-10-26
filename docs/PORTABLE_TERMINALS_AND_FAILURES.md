@@ -43,13 +43,13 @@ Termux has its own filesystem and packages. Installing Python in Termux does not
 | Cannot create `.venv` | venv/ensurepip unavailable or directory not writable | Install that distro's venv support or use a terminal with venv support. |
 | pip network/install failure | No internet, DNS/index issue, or package unavailable for this platform | Fix network/package support and retry the same launcher command. |
 | Pydantic/maturin native build error | An optional extra needs native build support not available on this Python/platform | Start with base dependencies; don't install optional extras unless needed and supported. |
-| Ollama connection refused | Ollama server is not running/reachable | Start Ollama where supported, or use a hosted provider. |
+| Ollama connection refused | Ollama server is not running/reachable | Select Gemini, OpenAI, or OpenRouter with `REACT_PROVIDER` and the matching API key, or start a reachable Ollama server. |
 | API key rejected / no credits | Key/account access or provider balance issue | Check the provider dashboard and model access. Never share or commit keys. |
 | TUI display/input problems | Terminal lacks full interactive TTY/ANSI support | Try `sh scripts/react.sh --classic` or a terminal with proper TTY support. |
 
 ## Model provider notes
 
-The launcher installs the ReAct application, not model services. Hosted models require a provider key and may require credits. Ollama requires a separately installed and running server. API requests may send prompt/code context to the selected provider; review that provider's data policies.
+The launcher installs the ReAct application, not model services. Supported providers are Ollama (local server), Gemini (`REACT_PROVIDER=gemini` + `GEMINI_API_KEY`), OpenAI (`REACT_PROVIDER=openai` + `OPENAI_API_KEY`), and OpenRouter (`REACT_PROVIDER=openrouter` + `OPENROUTER_API_KEY`). Cloud adapters use Python's standard library and do not require provider SDKs. Cloud API keys, model availability, quotas, and billing are managed by each provider. API requests may send prompt/code context to the selected provider; review that provider's data policies. Cloud adapters currently use JSON-tool fallback rather than native tool calling.
 
 ## Verification boundaries
 
