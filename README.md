@@ -14,6 +14,27 @@ Requires Python 3.10+. Choose a provider: Ollama for a reachable local server, o
 
 ## Provider setup
 
+ReAct supports a local Ollama server and a provider catalog for hosted APIs that expose OpenAI-compatible chat completions. The current adapter uses the JSON-tool fallback; provider-native tool calling and provider-specific features are not implied.
+
+| Provider ID | Service | API key link | Key environment variable |
+|---|---|---|---|
+| `ollama` | Local Ollama server | [Ollama](https://ollama.com/) | Not required |
+| `openrouter` | OpenRouter model gateway | [Create key](https://openrouter.ai/keys) | `OPENROUTER_API_KEY` |
+| `openai` | OpenAI API | [Create key](https://platform.openai.com/api-keys) | `OPENAI_API_KEY` |
+| `google` | Google Gemini OpenAI-compatible endpoint | [Get key](https://aistudio.google.com/apikey) | `GOOGLE_API_KEY` |
+| `groq` | Groq | [Create key](https://console.groq.com/keys) | `GROQ_API_KEY` |
+| `deepseek` | DeepSeek | [Create key](https://platform.deepseek.com/api_keys) | `DEEPSEEK_API_KEY` |
+| `mistral` | Mistral AI | [Create key](https://console.mistral.ai/api-keys/) | `MISTRAL_API_KEY` |
+| `together` | Together AI | [Create key](https://api.together.ai/settings/api-keys) | `TOGETHER_API_KEY` |
+| `fireworks` | Fireworks AI | [Create key](https://fireworks.ai/account/api-keys) | `FIREWORKS_API_KEY` |
+| `cerebras` | Cerebras | [Open console](https://cloud.cerebras.ai/) | `CEREBRAS_API_KEY` |
+| `xai` | xAI | [Open console](https://console.x.ai/) | `XAI_API_KEY` |
+| `custom` | Any compatible endpoint | [API reference](https://platform.openai.com/docs/api-reference) | `REACT_API_KEY` + `REACT_BASE_URL` |
+
+Set `REACT_PROVIDER` to the provider ID and optionally set `REACT_MODEL` to that provider's model ID. For example, OpenAI-compatible services use a provider-specific key variable, not a shared universal key. Provider availability, model IDs, free tiers, and prices can change. Anthropic's native API and other non-compatible APIs need dedicated adapters and are not claimed as supported by this catalog.
+
+The TUI's `/connect` command lists provider IDs, key variable names, and official key links. It does not ask for, display, or persist secrets; set keys in your local Termux environment. Never paste API keys into chat, source code, screenshots, or commits.
+
 ### OpenRouter BYOK (works from Termux without a local model)
 
 1. Create an API key in your OpenRouter account: https://openrouter.ai/keys
