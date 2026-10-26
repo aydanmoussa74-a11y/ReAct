@@ -50,9 +50,11 @@ def _check_provider(provider: str) -> str | None:
 def _resolve_model(requested: str | None, provider: str) -> str:
     if requested:
         return requested
-    if provider == "openrouter":
+    if provider != "ollama":
         import os
-        return os.environ.get("REACT_MODEL", "openrouter/auto")
+        from .providers import PROVIDER_CATALOG
+        default_model = PROVIDER_CATALOG[provider]["default_model"]
+        return os.environ.get("REACT_MODEL", default_model) or default_model
     client = get_client(provider)
     try:
         models = client.list().get("models", [])
