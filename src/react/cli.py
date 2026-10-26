@@ -50,9 +50,11 @@ def _check_provider(provider: str) -> str | None:
 def _resolve_model(requested: str | None, provider: str) -> str:
     if requested:
         return requested
-    if provider == "openrouter":
+    if provider != "ollama":
         import os
-        return os.environ.get("REACT_MODEL", "openrouter/auto")
+        from .providers import PROVIDER_CATALOG
+        default_model = PROVIDER_CATALOG[provider]["default_model"]
+        return os.environ.get("REACT_MODEL", default_model) or default_model
     client = get_client(provider)
     try:
         models = client.list().get("models", [])
@@ -277,11 +279,17 @@ def _repl(agent: Agent, use_native: bool) -> None:
 def main(
     prompt: str = typer.Argument(None, help="Optional prompt. Omit to enter interactive REPL."),
     model: str = typer.Option(None, "--model", "-m", help="Model ID for the selected provider."),
+    classic: bool = typer.Option(False, "--classic", help="Use the legacy Rich REPL instead of the full-screen TUI."),
     dangerously_allow_dotfiles: bool = typer.Option(
         False, "--dangerously-allow-dotfiles",
         help="Allow writes to dotfiles. Use with caution."),
 ) -> None:
     """Send a prompt to the configured AI provider, or start an interactive session."""
+    if prompt is None and not classic:
+        from .tui import ReActTUI
+        ReActTUI().run()
+        return
+
     try:
         provider = get_provider_name()
     except Exception as exc:

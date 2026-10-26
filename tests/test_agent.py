@@ -111,3 +111,36 @@ def test_fallback_system_prompt_does_not_accumulate():
         agent.run("first", use_native=False)
         agent.run("second", use_native=False)
     assert sum(1 for m in agent.messages if m.get("role") == "system") == 1
+
+
+
+def test_agent_emits_assistant_events_without_rich_live_output():
+    client = MagicMock()
+    client.chat.return_value = _stream(_chunk(content="DONE: Actual mocked answer"), _chunk(done=True))
+    events = []
+    with patch("react.agent.ollama.Client", return_value=client):
+        agent = Agent("llama3.2", on_event=lambda name, data: events.append((name, data)))
+        agent.run("answer this", use_native=False)
+    assert ("assistant_message", {"text": "Actual mocked answer"}) in events
+    assert any(name == "turn_started" for name, _ in events)
+    assert any(name == "turn_finished" for name, _ in events)
+
+
+def test_agent_denied_write_uses_approval_callback_and_never_writes():
+    client = MagicMock()
+    client.chat.side_effect = [
+        _stream(_chunk(content='{"tool": "write_file", "args": {"path": "should_not_exist.txt", "content": "no"}}'), _chunk(done=True)),
+        _stream(_chunk(content="DONE: I did not write the file."), _chunk(done=True)),
+    ]
+    events = []
+    approvals = []
+    with patch("react.agent.ollama.Client", return_value=client):
+        agent = Agent(
+            "llama3.2",
+            on_event=lambda name, data: events.append((name, data)),
+            approve=lambda name, args: approvals.append((name, args)) or False,
+        )
+        agent.run("write a file", use_native=False)
+    assert approvals == [("write_file", {"path": "should_not_exist.txt", "content": "no"})]
+    assert any(name == "approval_denied" for name, _ in events)
+    assert any(m.get("role") == "tool" and "declined" in m.get("content", "") for m in agent.messages)

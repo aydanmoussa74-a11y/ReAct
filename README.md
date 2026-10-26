@@ -4,17 +4,48 @@ A phone-friendly AI coding agent with a local Ollama option and OpenRouter BYOK 
 
 It can read files, search code, write or edit files (with confirmation), run shell commands, and automatically try to fix failures.
 
-## Install
+## Install and run
 
-```bash
-pip install -r requirements.txt
+Requires Python 3.10+ and an interactive terminal. From the repository root, the recommended one-command bootstrap is:
+
+```sh
+sh scripts/react.sh
 ```
 
-Requires Python 3.10+. Choose a provider: Ollama for a reachable local server, or OpenRouter BYOK for cloud models without downloading model weights.
+It creates a project-local `.venv`, installs the base package/dependencies when needed, and starts the full-screen TUI. Use `sh scripts/react.sh --classic` for the classic REPL.
+
+For a fresh checkout, clone and launch in one terminal command:
+
+```sh
+git clone https://github.com/aydanmoussa74-a11y/ReAct.git && cd ReAct && sh scripts/react.sh
+``` The bootstrap is designed for POSIX terminals, including compatible Android coding-app terminals; it cannot supply Python/venv features that the host terminal does not provide. See [Portable terminals and troubleshooting](docs/PORTABLE_TERMINALS_AND_FAILURES.md) for setup, failure fixes, and platform limits.
+
+The first run needs internet access for package installation. Then choose a provider in `/connect`. Hosted APIs require your own valid key and may require credits. Ollama requires a separately installed and running Ollama server.
 
 ## Provider setup
 
-### OpenRouter BYOK (works from Termux without a local model)
+ReAct supports a local Ollama server and a provider catalog for hosted APIs that expose OpenAI-compatible chat completions. The current adapter uses the JSON-tool fallback; provider-native tool calling and provider-specific features are not implied.
+
+| Provider ID | Service | API key link | Key environment variable |
+|---|---|---|---|
+| `ollama` | Local Ollama server | [Ollama](https://ollama.com/) | Not required |
+| `openrouter` | OpenRouter model gateway | [Create key](https://openrouter.ai/keys) | `OPENROUTER_API_KEY` |
+| `openai` | OpenAI API | [Create key](https://platform.openai.com/api-keys) | `OPENAI_API_KEY` |
+| `google` | Google Gemini OpenAI-compatible endpoint | [Get key](https://aistudio.google.com/apikey) | `GOOGLE_API_KEY` |
+| `groq` | Groq | [Create key](https://console.groq.com/keys) | `GROQ_API_KEY` |
+| `deepseek` | DeepSeek | [Create key](https://platform.deepseek.com/api_keys) | `DEEPSEEK_API_KEY` |
+| `mistral` | Mistral AI | [Create key](https://console.mistral.ai/api-keys/) | `MISTRAL_API_KEY` |
+| `together` | Together AI | [Create key](https://api.together.ai/settings/api-keys) | `TOGETHER_API_KEY` |
+| `fireworks` | Fireworks AI | [Create key](https://fireworks.ai/account/api-keys) | `FIREWORKS_API_KEY` |
+| `cerebras` | Cerebras | [Open console](https://cloud.cerebras.ai/) | `CEREBRAS_API_KEY` |
+| `xai` | xAI | [Open console](https://console.x.ai/) | `XAI_API_KEY` |
+| `custom` | Any compatible endpoint | [API reference](https://platform.openai.com/docs/api-reference) | `REACT_API_KEY` + `REACT_BASE_URL` |
+
+Set `REACT_PROVIDER` to the provider ID and optionally set `REACT_MODEL` to that provider's model ID. For example, OpenAI-compatible services use a provider-specific key variable, not a shared universal key. Provider availability, model IDs, free tiers, and prices can change. Anthropic's native API and other non-compatible APIs need dedicated adapters and are not claimed as supported by this catalog.
+
+In the full-screen TUI, `/connect` opens a provider setup wizard. Choose a provider, enter its key in a masked field, optionally override the model, and use **Test & Connect** to verify a real response. Custom OpenAI-compatible endpoints can specify a base URL. Keys are held in process memory only and are not written to disk; restarting ReAct requires reconnecting. The official key-page URL is shown in the wizard. Never paste API keys into chat, source code, screenshots, or commits. Connection tests send a small prompt to the selected provider and may incur usage charges.
+
+### OpenRouter BYOK (works from compatible terminals without a local model)
 
 1. Create an API key in your OpenRouter account: https://openrouter.ai/keys
 2. In Termux, set the key for the current shell session (replace the placeholder locally; never share it or commit it):
@@ -35,6 +66,18 @@ For Ollama, keep `REACT_PROVIDER` unset (or set it to `ollama`) and make sure th
 
 ## Usage
 
+### Full-screen terminal interface
+
+Run with no arguments to open the Textual workspace:
+
+```bash
+react
+# or
+python -m react.cli
+```
+
+Use `react --classic` to open the legacy Rich REPL. The TUI runs real agent turns in a background worker, shows model responses/tool activity/errors, and routes file-write/edit and command approvals through `/approve` and `/deny`. Approval waits time out to denial. Use `@path/to/file.py` in a prompt to include a project-contained text file (up to 50 KB) in the model context. No provider request occurs until you submit a task.
+
 ### One-shot
 
 ```bash
@@ -45,12 +88,12 @@ react "create a notes.md summarizing this project"
 
 ### Interactive REPL
 
-Run with no arguments to enter a persistent session. Conversation history and file context are kept across turns.
+Run with `--classic` to enter the legacy persistent Rich REPL. Conversation history and file context are kept across turns.
 
 ```bash
-react
+react --classic
 # or
-python -m react.cli
+python -m react.cli --classic
 ```
 
 ```
@@ -133,11 +176,7 @@ The map is only an index. The agent is instructed to follow Map → Investigate 
 
 ### Confirmation
 
-Before any write or edit the CLI shows a preview and asks:
-
-```
-Apply this change? [y/n/e/a]
-```
+Before any write/edit or command execution, the CLI asks for confirmation. In the Textual interface, inspect the displayed preview and enter `/approve` or `/deny`; waiting three minutes defaults to denial. The classic CLI uses its interactive confirmation prompt.
 
 ### Self-healing
 

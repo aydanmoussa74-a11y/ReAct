@@ -28,3 +28,7 @@ jobs:
         run: python -m pip install --upgrade pip && python -m pip install -e ".[dev,ai,mcp]"
       - name: Run tests
         run: python -m pytest -q
+      - name: Validate launcher shell syntax
+        run: sh -n scripts/react.sh
+      - name: Smoke-test full-screen TUI imports
+        run: python -c "from react.tui import ReActTUI, ProviderSetupScreen; print('TUI imports OK')"
