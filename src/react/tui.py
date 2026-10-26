@@ -13,7 +13,8 @@ from rich.text import Text
 from textual.app import App, ComposeResult
 from textual.containers import Horizontal, Vertical
 from textual.message import Message
-from textual.widgets import Footer, Input, RichLog, Static
+from textual.screen import ModalScreen
+from textual.widgets import Button, Footer, Input, RichLog, Select, Static
 
 AMBER = "#ffbd59"
 MUTED = "#a1a1aa"
@@ -54,6 +55,140 @@ def project_files(root: Path, limit: int = 80) -> list[str]:
     except OSError:
         return []
     return sorted(results)
+
+
+class ProviderSetupScreen(ModalScreen):
+    """Session-only provider setup. Secrets are masked and never written to disk."""
+
+    CSS = """
+    ProviderSetupScreen { align: center middle; background: $background 80%; }
+    #provider-dialog { width: 90%; max-width: 76; height: auto; max-height: 90%; border: solid #ffbd59; background: #101216; padding: 1 2; }
+    #provider-title { color: #ffbd59; text-style: bold; height: 2; }
+    .provider-label { color: #e5e7eb; margin-top: 1; }
+    .provider-hint { color: #a1a1aa; height: auto; }
+    #provider-actions { height: 3; margin-top: 1; }
+    #provider-actions Button { margin-right: 1; }
+    """
+
+    def compose(self) -> ComposeResult:
+        from .providers import PROVIDER_CATALOG
+        options = [("Ollama · local", "ollama")] + [
+            (cfg["label"], key) for key, cfg in PROVIDER_CATALOG.items()
+        ]
+        with Vertical(id="provider-dialog"):
+            yield Static("CONNECT A MODEL PROVIDER", id="provider-title")
+            yield Static("Choose a provider. API keys stay in this running process only.", classes="provider-hint")
+            yield Static("Provider", classes="provider-label")
+            yield Select(options, value="openrouter", allow_blank=False, id="provider-choice")
+            yield Static("API key (masked)", classes="provider-label")
+            yield Input(placeholder="Paste provider API key", password=True, id="provider-key")
+            yield Static("Model ID (optional)", classes="provider-label")
+            yield Input(placeholder="Use provider default", id="provider-model")
+            yield Static("Custom base URL (custom provider only)", classes="provider-label")
+            yield Input(placeholder="https://your-provider.example/v1", id="provider-base-url")
+            yield Static("Choose a provider to see its official key page.", id="provider-link", classes="provider-hint")
+            yield Static("Connection test sends a tiny test prompt to the selected model.", id="provider-warning", classes="provider-hint")
+            yield Static("", id="provider-result", classes="provider-hint")
+            with Horizontal(id="provider-actions"):
+                yield Button("Test & Connect", variant="primary", id="provider-test")
+                yield Button("Cancel", id="provider-cancel")
+            yield Footer()
+
+    def on_mount(self) -> None:
+        self._refresh_provider_details()
+        self.query_one("#provider-choice", Select).focus()
+
+    def on_select_changed(self, event: Select.Changed) -> None:
+        if event.select.id == "provider-choice":
+            self._refresh_provider_details()
+
+    def _refresh_provider_details(self) -> None:
+        from .providers import PROVIDER_CATALOG
+        provider = self.query_one("#provider-choice", Select).value
+        if not isinstance(provider, str):
+            return
+        if provider == "ollama":
+            text = "Ollama runs locally. Start your local Ollama server first."
+            self.query_one("#provider-link", Static).update("Local provider · no API key")
+            self.query_one("#provider-key", Input).display = False
+            self.query_one("#provider-base-url", Input).display = False
+        else:
+            cfg = PROVIDER_CATALOG[provider]
+            text = f"Official key page: {cfg['url']}\nKey variable: {cfg['key_env']}"
+            self.query_one("#provider-link", Static).update(text)
+            self.query_one("#provider-key", Input).display = True
+            self.query_one("#provider-base-url", Input).display = provider == "custom"
+            self.query_one("#provider-model", Input).placeholder = cfg["default_model"] or "Enter model ID"
+        self.query_one("#provider-result", Static).update("")
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "provider-cancel":
+            self.dismiss(None)
+        elif event.button.id == "provider-test":
+            self._test_and_connect()
+
+    def _test_and_connect(self) -> None:
+        import os
+        from .providers import PROVIDER_CATALOG, get_client
+        provider = self.query_one("#provider-choice", Select).value
+        if not isinstance(provider, str):
+            return
+        model_input = self.query_one("#provider-model", Input).value.strip()
+        key_input = self.query_one("#provider-key", Input).value
+        base_input = self.query_one("#provider-base-url", Input).value.strip()
+        env_names = ["REACT_PROVIDER", "REACT_MODEL", "REACT_BASE_URL", "REACT_API_KEY"]
+        env_names.extend(cfg["key_env"] for cfg in PROVIDER_CATALOG.values())
+        previous = {name: os.environ.get(name) for name in env_names}
+        try:
+            os.environ["REACT_PROVIDER"] = provider
+            if provider == "ollama":
+                model = model_input or "llama3.2"
+            else:
+                cfg = PROVIDER_CATALOG[provider]
+                if not key_input.strip():
+                    raise RuntimeError(f"Enter your API key. Get one at {cfg['url']}")
+                os.environ[cfg["key_env"]] = key_input.strip()
+                model = model_input or cfg["default_model"]
+                if not model:
+                    raise RuntimeError("Enter a model ID for this custom endpoint.")
+                if provider == "custom":
+                    if not base_input:
+                        raise RuntimeError("Enter the custom OpenAI-compatible base URL.")
+                    os.environ["REACT_BASE_URL"] = base_input
+                    os.environ["REACT_API_KEY"] = key_input.strip()
+            os.environ["REACT_MODEL"] = model
+            self.query_one("#provider-test", Button).disabled = True
+            self.query_one("#provider-result", Static).update("Testing connection…")
+            self.run_worker(partial(self._connection_test_worker, provider, model, previous), name="provider-connection-test", thread=True, exclusive=True)
+        except Exception as exc:
+            self.query_one("#provider-result", Static).update(f"Setup error: {exc}")
+
+    def _connection_test_worker(self, provider: str, model: str, previous: dict) -> None:
+        try:
+            from .providers import get_client
+            client = get_client(provider)
+            response = client.chat(model=model, messages=[{"role": "user", "content": "Reply with OK."}], stream=False)
+            answer = str(response.get("message", {}).get("content", "")).strip()
+            if not answer:
+                raise RuntimeError("Provider returned an empty response.")
+            self.call_from_thread(self._connection_test_finished, provider, model, previous, None)
+        except Exception as exc:
+            self.call_from_thread(self._connection_test_finished, provider, model, previous, f"{type(exc).__name__}: {exc}")
+
+    def _connection_test_finished(self, provider: str, model: str, previous: dict, error: str | None) -> None:
+        import os
+        if error:
+            for name, value in previous.items():
+                if value is None:
+                    os.environ.pop(name, None)
+                else:
+                    os.environ[name] = value
+            self.query_one("#provider-result", Static).update("Connection failed: " + error)
+            self.query_one("#provider-test", Button).disabled = False
+            return
+        self.query_one("#provider-result", Static).update(f"Connected successfully: {provider} · {model}. Key remains in memory only.")
+        self.query_one("#provider-key", Input).value = ""
+        self.dismiss({"provider": provider, "model": model})
 
 
 class ReActTUI(App):
@@ -207,12 +342,7 @@ class ReActTUI(App):
         elif value == "/status":
             self._append_log(f"Agent: {'busy' if self.busy else 'ready'}\nProvider: {self.provider}\nModel: {self.model}\nTool mode: {'native' if self.use_native else 'JSON fallback'}\nPending approval: {'yes' if self.pending_approval else 'no'}")
         elif value == "/connect":
-            from .providers import PROVIDER_CATALOG
-            lines = ["Provider setup (keys are environment variables; never commit them):", "ollama — local server; no API key."]
-            for key, cfg in PROVIDER_CATALOG.items():
-                lines.append(f"{key} — {cfg['label']} | key: {cfg['key_env']} | get key: {cfg['url']}")
-            lines.append("Set REACT_PROVIDER to the provider ID and REACT_MODEL to a model ID if you want to override its default. Custom endpoint uses REACT_BASE_URL and REACT_API_KEY.")
-            self._append_log("\\n".join(lines))
+            self.push_screen(ProviderSetupScreen(), self._provider_setup_finished)
         elif value.startswith("/model"):
             self._append_log(f"Active model: {self.model}. Runtime switching is not available yet; use the classic CLI to change it.")
         elif value == "/approve":
@@ -231,6 +361,15 @@ class ReActTUI(App):
                 self._append_log(note, AMBER)
             self._start_agent(prompt)
         log.scroll_end(animate=False)
+
+    def _provider_setup_finished(self, result) -> None:
+        if not result:
+            self._append_log("Provider setup cancelled.")
+            return
+        self.provider, self.model = result["provider"], result["model"]
+        self._append_log(f"Connected and verified: {self.provider} · {self.model}", "bold green")
+        self.query_one("#provider-sidebar", Static).update(f"{self.provider} · {self.model}")
+        self.query_one("#connection", Static).update("● CONNECTED")
 
     def _expand_file_context(self, prompt: str) -> tuple[str, str]:
         root = Path.cwd().resolve()
