@@ -33,7 +33,7 @@ ReAct supports a local Ollama server and a provider catalog for hosted APIs that
 
 Set `REACT_PROVIDER` to the provider ID and optionally set `REACT_MODEL` to that provider's model ID. For example, OpenAI-compatible services use a provider-specific key variable, not a shared universal key. Provider availability, model IDs, free tiers, and prices can change. Anthropic's native API and other non-compatible APIs need dedicated adapters and are not claimed as supported by this catalog.
 
-The TUI's `/connect` command lists provider IDs, key variable names, and official key links. It does not ask for, display, or persist secrets; set keys in your local Termux environment. Never paste API keys into chat, source code, screenshots, or commits.
+In the full-screen TUI, `/connect` opens a provider setup wizard. Choose a provider, enter its key in a masked field, optionally override the model, and use **Test & Connect** to verify a real response. Custom OpenAI-compatible endpoints can specify a base URL. Keys are held in process memory only and are not written to disk; restarting ReAct requires reconnecting. The official key-page URL is shown in the wizard. Never paste API keys into chat, source code, screenshots, or commits. Connection tests send a small prompt to the selected provider and may incur usage charges.
 
 ### OpenRouter BYOK (works from Termux without a local model)
 
