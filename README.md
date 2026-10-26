@@ -24,24 +24,59 @@ Requires Python 3.10+. Choose a provider: Ollama for a reachable local server, o
 
 ## Provider setup
 
-### OpenRouter BYOK (works from Termux without a local model)
+ReAct supports four provider choices:
 
-1. Create an API key in your OpenRouter account: https://openrouter.ai/keys
-2. In Termux, set the key for the current shell session (replace the placeholder locally; never share it or commit it):
+| Provider | Environment variables | Default model | Notes |
+|---|---|---|---|
+| Ollama | `REACT_PROVIDER=ollama` (default), optional `OLLAMA_HOST` | `llama3.2` | Requires a separately running, reachable Ollama server. The Python client is not the server. |
+| Gemini | `REACT_PROVIDER=gemini`, `GEMINI_API_KEY` | `gemini-2.5-flash` | Google Gemini API; standard-library HTTP, no extra SDK. |
+| OpenAI | `REACT_PROVIDER=openai`, `OPENAI_API_KEY` | `gpt-4.1-mini` | OpenAI API; standard-library HTTP, no extra SDK. |
+| OpenRouter | `REACT_PROVIDER=openrouter`, `OPENROUTER_API_KEY` | `openrouter/auto` | OpenRouter's OpenAI-compatible API. |
+
+Cloud providers use ReAct's JSON-tool fallback mode: the model must follow the instructions to emit a JSON tool call or `DONE:` final answer. Native provider tool calling is not enabled in these adapters yet. API usage, quota, and billing depend on your provider/account; a key does not guarantee free usage.
+
+### Gemini (good first option to try)
+
+1. Create a key at https://aistudio.google.com/.
+2. In the terminal, select Gemini and enter the key without saving it in the repository:
+
+   ```sh
+   export REACT_PROVIDER=gemini
+   read -s -p 'Gemini API key: ' GEMINI_API_KEY; echo
+   export GEMINI_API_KEY
+   # Optional model override:
+   export REACT_MODEL=gemini-2.5-flash
+   sh scripts/react.sh
+   ```
+
+### OpenAI
+
+Create an API key at https://platform.openai.com/api-keys, then:
+
+```sh
+export REACT_PROVIDER=openai
+read -s -p 'OpenAI API key: ' OPENAI_API_KEY; echo
+export OPENAI_API_KEY
+export REACT_MODEL=gpt-4.1-mini
+sh scripts/react.sh
+```
+
+### OpenRouter
+
+1. Create a key at https://openrouter.ai/keys.
+2. Configure it in the current shell:
 
    ```sh
    export REACT_PROVIDER=openrouter
    read -s -p 'OpenRouter API key: ' OPENROUTER_API_KEY; echo
    export OPENROUTER_API_KEY
-   # Optional: choose a specific model ID from https://openrouter.ai/models
    export REACT_MODEL=openrouter/auto
+   sh scripts/react.sh
    ```
 
-3. Run `react` or `react "explain this project"`.
+Choose a model ID from https://openrouter.ai/models.
 
-The key is read from the environment, the hidden prompt avoids putting it directly in shell history, and it is not written to the repository. Keep the key private. OpenRouter usage may cost money; check model pricing and account limits before using it. The current adapter uses ReAct's JSON-tool fallback mode and does not yet support native provider tool calls.
-
-For Ollama, keep `REACT_PROVIDER` unset (or set it to `ollama`) and make sure the Ollama server is reachable. A Python Ollama client alone is not the server.
+These commands avoid typing the key directly into the command history, but the key remains available in that terminal session's environment. Never paste it into chat, source code, screenshots, or commits. To switch providers, set the corresponding `REACT_PROVIDER` and key variable in the same terminal. Provider selection and environment variables are per terminal/session; Acode and Termux do not automatically share them.
 
 ## Usage
 
