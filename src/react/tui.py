@@ -1,8 +1,7 @@
-"""Full-screen Textual interface for ReAct.
+"""Full-screen Textual interface wired to the ReAct agent and provider adapters.
 
-This first TUI milestone is intentionally provider-independent. It provides the
-workspace shell and local command/context discovery without pretending that an
-AI turn ran before the agent event bridge is implemented.
+Agent turns run in a background worker; structured agent events are marshalled
+back to the UI thread, and write/edit/command approvals are mediated by the UI.
 """
 from __future__ import annotations
 
@@ -352,7 +351,7 @@ class ReActTUI(App):
             self._decide_approval(False)
 
     def _set_provider_status(self, provider: str, model: str, native: bool) -> None:
-        self.query_one("#connection", Static).update("● CONNECTED")
+        self.query_one("#connection", Static).update("● AGENT ACTIVE")
         self.query_one("#provider-sidebar", Static).update(f"{provider} · {model}")
         self._append_log(f"Provider: {provider} · Model: {model} · Tool mode: {'native' if native else 'JSON fallback'}")
 
