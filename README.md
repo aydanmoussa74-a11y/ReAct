@@ -4,11 +4,21 @@ A phone-friendly AI coding agent with a local Ollama option and OpenRouter BYOK 
 
 It can read files, search code, write or edit files (with confirmation), run shell commands, and automatically try to fix failures.
 
-## Install
+## Install and run
 
-```bash
-pip install -r requirements.txt
+Requires Python 3.10+ and an interactive terminal. Recommended one-command setup from the repository root:
+
+```sh
+sh scripts/react.sh
 ```
+
+For a fresh clone, use:
+
+```sh
+git clone https://github.com/aydanmoussa74-a11y/ReAct.git && cd ReAct && sh scripts/react.sh
+```
+
+The launcher creates a project-local virtual environment, installs the base dependencies when needed, and starts ReAct. Use `sh scripts/react.sh --classic` for the classic interface. It works in Termux, Linux/macOS, and Acode-like terminal environments only when the environment provides Python 3.10+, shell, venv support, and interactive terminal I/O. See [Portable terminals and troubleshooting](docs/PORTABLE_TERMINALS_AND_FAILURES.md).
 
 Requires Python 3.10+. Choose a provider: Ollama for a reachable local server, or OpenRouter BYOK for cloud models without downloading model weights.
 
