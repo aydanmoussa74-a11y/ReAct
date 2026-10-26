@@ -12,7 +12,13 @@ Requires Python 3.10+ and an interactive terminal. From the repository root, the
 sh scripts/react.sh
 ```
 
-It creates a project-local `.venv`, installs the base package/dependencies when needed, and starts the full-screen TUI. Use `sh scripts/react.sh --classic` for the classic REPL. The bootstrap is designed for POSIX terminals, including compatible Android coding-app terminals; it cannot supply Python/venv features that the host terminal does not provide. See [Portable terminals and troubleshooting](docs/PORTABLE_TERMINALS_AND_FAILURES.md) for setup, failure fixes, and platform limits.
+It creates a project-local `.venv`, installs the base package/dependencies when needed, and starts the full-screen TUI. Use `sh scripts/react.sh --classic` for the classic REPL.
+
+For a fresh checkout, clone and launch in one terminal command:
+
+```sh
+git clone https://github.com/aydanmoussa74-a11y/ReAct.git && cd ReAct && sh scripts/react.sh
+``` The bootstrap is designed for POSIX terminals, including compatible Android coding-app terminals; it cannot supply Python/venv features that the host terminal does not provide. See [Portable terminals and troubleshooting](docs/PORTABLE_TERMINALS_AND_FAILURES.md) for setup, failure fixes, and platform limits.
 
 The first run needs internet access for package installation. Then choose a provider in `/connect`. Hosted APIs require your own valid key and may require credits. Ollama requires a separately installed and running Ollama server.
 
