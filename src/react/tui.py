@@ -207,7 +207,12 @@ class ReActTUI(App):
         elif value == "/status":
             self._append_log(f"Agent: {'busy' if self.busy else 'ready'}\nProvider: {self.provider}\nModel: {self.model}\nTool mode: {'native' if self.use_native else 'JSON fallback'}\nPending approval: {'yes' if self.pending_approval else 'no'}")
         elif value == "/connect":
-            self._append_log("Provider uses REACT_PROVIDER=ollama or openrouter. OpenRouter needs OPENROUTER_API_KEY and optionally REACT_MODEL before launch. This UI never displays or stores your API key.")
+            from .providers import PROVIDER_CATALOG
+            lines = ["Provider setup (keys are environment variables; never commit them):", "ollama — local server; no API key."]
+            for key, cfg in PROVIDER_CATALOG.items():
+                lines.append(f"{key} — {cfg['label']} | key: {cfg['key_env']} | get key: {cfg['url']}")
+            lines.append("Set REACT_PROVIDER to the provider ID and REACT_MODEL to a model ID if you want to override its default. Custom endpoint uses REACT_BASE_URL and REACT_API_KEY.")
+            self._append_log("\\n".join(lines))
         elif value.startswith("/model"):
             self._append_log(f"Active model: {self.model}. Runtime switching is not available yet; use the classic CLI to change it.")
         elif value == "/approve":
