@@ -14,114 +14,182 @@ from urllib.request import Request, urlopen
 from .ollama_compat import ollama
 
 
-class OpenRouterClient:
-    """Small synchronous client exposing the subset of the Ollama API ReAct uses."""
+# Providers with an OpenAI-compatible chat-completions endpoint. API keys are
+# read from environment variables only; they are never persisted by ReAct.
+PROVIDER_CATALOG = {
+    "openrouter": {
+        "label": "OpenRouter",
+        "base_url": "https://openrouter.ai/api/v1",
+        "key_env": "OPENROUTER_API_KEY",
+        "url": "https://openrouter.ai/keys",
+        "default_model": "openrouter/auto",
+    },
+    "openai": {
+        "label": "OpenAI",
+        "base_url": "https://api.openai.com/v1",
+        "key_env": "OPENAI_API_KEY",
+        "url": "https://platform.openai.com/api-keys",
+        "default_model": "gpt-4.1-mini",
+    },
+    "groq": {
+        "label": "Groq",
+        "base_url": "https://api.groq.com/openai/v1",
+        "key_env": "GROQ_API_KEY",
+        "url": "https://console.groq.com/keys",
+        "default_model": "llama-3.3-70b-versatile",
+    },
+    "google": {
+        "label": "Google Gemini (OpenAI-compatible endpoint)",
+        "base_url": "https://generativelanguage.googleapis.com/v1beta/openai",
+        "key_env": "GOOGLE_API_KEY",
+        "url": "https://aistudio.google.com/apikey",
+        "default_model": "gemini-2.5-flash",
+    },
+    "deepseek": {
+        "label": "DeepSeek",
+        "base_url": "https://api.deepseek.com",
+        "key_env": "DEEPSEEK_API_KEY",
+        "url": "https://platform.deepseek.com/api_keys",
+        "default_model": "deepseek-chat",
+    },
+    "mistral": {
+        "label": "Mistral AI",
+        "base_url": "https://api.mistral.ai/v1",
+        "key_env": "MISTRAL_API_KEY",
+        "url": "https://console.mistral.ai/api-keys/",
+        "default_model": "mistral-small-latest",
+    },
+    "together": {
+        "label": "Together AI",
+        "base_url": "https://api.together.xyz/v1",
+        "key_env": "TOGETHER_API_KEY",
+        "url": "https://api.together.ai/settings/api-keys",
+        "default_model": "meta-llama/Llama-3.3-70B-Instruct-Turbo",
+    },
+    "fireworks": {
+        "label": "Fireworks AI",
+        "base_url": "https://api.fireworks.ai/inference/v1",
+        "key_env": "FIREWORKS_API_KEY",
+        "url": "https://fireworks.ai/account/api-keys",
+        "default_model": "accounts/fireworks/models/llama-v3p3-70b-instruct",
+    },
+    "cerebras": {
+        "label": "Cerebras",
+        "base_url": "https://api.cerebras.ai/v1",
+        "key_env": "CEREBRAS_API_KEY",
+        "url": "https://cloud.cerebras.ai/",
+        "default_model": "llama-3.3-70b",
+    },
+    "xai": {
+        "label": "xAI",
+        "base_url": "https://api.x.ai/v1",
+        "key_env": "XAI_API_KEY",
+        "url": "https://console.x.ai/",
+        "default_model": "grok-3-mini",
+    },
+    "custom": {
+        "label": "Custom OpenAI-compatible endpoint",
+        "base_url_env": "REACT_BASE_URL",
+        "key_env": "REACT_API_KEY",
+        "url": "https://platform.openai.com/docs/api-reference",
+        "default_model": "",
+    },
+}
 
-    def __init__(self, api_key: str | None = None, timeout: int = 60) -> None:
-        self.api_key = api_key or os.environ.get("OPENROUTER_API_KEY", "")
+
+class OpenAICompatibleClient:
+    """Standard-library adapter for OpenAI-compatible chat-completions APIs."""
+
+    def __init__(self, provider: str, api_key: str | None = None, timeout: int = 60):
+        if provider not in PROVIDER_CATALOG:
+            raise RuntimeError(f"Unsupported API provider: {provider}")
+        self.provider = provider
+        self.config = PROVIDER_CATALOG[provider]
+        key_name = self.config["key_env"]
+        self.api_key = api_key or os.environ.get(key_name, "")
         self.timeout = timeout
-        self.base_url = os.environ.get(
-            "OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1"
-        ).rstrip("/")
+        base_env = self.config.get("base_url_env")
+        self.base_url = (os.environ.get(base_env, "") if base_env else self.config.get("base_url", "")).rstrip("/")
+        if not self.base_url:
+            raise RuntimeError("Custom endpoint needs REACT_BASE_URL, e.g. https://api.example.com/v1")
         if not self.api_key:
             raise RuntimeError(
-                "OpenRouter API key is missing. Set OPENROUTER_API_KEY in your "
-                "Termux session, then retry. Never paste your key into source code."
+                f"{self.config['label']} API key missing. Set {key_name}; "
+                f"get a key at {self.config['url']}. Never commit or share API keys."
             )
 
     def _request(self, path: str, payload: dict | None = None) -> dict:
         data = json.dumps(payload).encode("utf-8") if payload is not None else None
-        headers = {
-            "Authorization": f"Bearer {self.api_key}",
-            "Content-Type": "application/json",
-            "HTTP-Referer": "https://github.com/aydanmoussa74-a11y/ReAct",
-            "X-Title": "ReAct",
-        }
+        headers = {"Authorization": f"Bearer {self.api_key}", "Content-Type": "application/json"}
+        if self.provider == "openrouter":
+            headers.update({"HTTP-Referer": "https://github.com/aydanmoussa74-a11y/ReAct", "X-Title": "ReAct"})
         req = Request(f"{self.base_url}{path}", data=data, headers=headers)
         try:
             with urlopen(req, timeout=self.timeout) as response:
                 return json.loads(response.read().decode("utf-8"))
         except HTTPError as exc:
-            try:
-                detail = exc.read().decode("utf-8", errors="replace")[:800]
-            except Exception:
-                detail = str(exc)
+            detail = exc.read().decode("utf-8", errors="replace")[:500]
             if exc.code in (401, 403):
-                raise RuntimeError(
-                    "OpenRouter rejected the API key or account access. Check "
-                    "OPENROUTER_API_KEY and your OpenRouter account."
-                ) from None
+                raise RuntimeError(f"{self.config['label']} rejected the API key or account access. Check {self.config['key_env']}.") from None
             if exc.code == 402:
-                raise RuntimeError(
-                    "OpenRouter reports insufficient credits or spending balance. "
-                    "Check your account and model pricing."
-                ) from None
-            raise RuntimeError(f"OpenRouter API error ({exc.code}): {detail}") from None
+                raise RuntimeError(f"{self.config['label']} reports insufficient credits or spending balance.") from None
+            raise RuntimeError(f"{self.config['label']} API error ({exc.code}): {detail}") from None
         except URLError as exc:
-            raise RuntimeError(
-                f"Could not reach OpenRouter: {getattr(exc, 'reason', exc)}. "
-                "Check your internet connection."
-            ) from None
+            raise RuntimeError(f"Could not reach {self.config['label']}: {getattr(exc, 'reason', exc)}") from None
         except TimeoutError:
-            raise RuntimeError("OpenRouter request timed out. Try again.") from None
+            raise RuntimeError(f"{self.config['label']} request timed out. Try again.") from None
         except (json.JSONDecodeError, UnicodeDecodeError):
-            raise RuntimeError("OpenRouter returned an unreadable response.") from None
+            raise RuntimeError(f"{self.config['label']} returned an unreadable response.") from None
 
     def list(self) -> dict:
-        """Validate connectivity and credentials; return a model list."""
-        result = self._request("/models")
-        return {"models": result.get("data", [])}
+        try:
+            result = self._request("/models")
+            return {"models": result.get("data", [])}
+        except RuntimeError:
+            # Some compatible endpoints do not expose a models-list route.
+            return {"models": []}
 
     def show(self, model: str) -> dict:
-        """OpenRouter currently uses ReAct's JSON-tool fallback mode."""
         return {"model": model, "capabilities": []}
 
     def chat(self, *, model: str, messages: list[dict], stream: bool = False, **kwargs) -> dict:
-        # ReAct's current agent loop consumes Ollama-shaped responses and parses
-        # JSON tool calls from assistant text. Keep this adapter non-streaming
-        # and normalize the response rather than adding an SDK dependency.
-        payload = {
-            "model": model,
-            "messages": [
-                (
-                    {"role": "user", "content": "[ReAct tool result]\\n" + str(m.get("content", ""))}
-                    if m.get("role") == "tool"
-                    else {"role": m.get("role", "user"), "content": m.get("content", "")}
-                )
-                for m in messages
-                if m.get("role") in {"system", "user", "assistant", "tool"}
-            ],
-            "stream": False,
-        }
-        result = self._request("/chat/completions", payload)
+        normalized = []
+        for item in messages:
+            role = item.get("role", "user")
+            if role == "tool":
+                normalized.append({"role": "user", "content": "[ReAct tool result]\\n" + str(item.get("content", ""))})
+            elif role in {"system", "user", "assistant"}:
+                normalized.append({"role": role, "content": item.get("content", "")})
+        result = self._request("/chat/completions", {"model": model, "messages": normalized, "stream": False})
         choices = result.get("choices") or []
         if not choices:
-            raise RuntimeError("OpenRouter returned no model response.")
-        message = choices[0].get("message") or {}
-        content = message.get("content") or ""
+            raise RuntimeError(f"{self.config['label']} returned no model response.")
+        content = (choices[0].get("message") or {}).get("content") or ""
         if not isinstance(content, str):
-            # ReAct fallback parsing consumes plain text only.
             content = json.dumps(content, ensure_ascii=False)
-        return {
-            "message": {"role": "assistant", "content": content},
-            "done": True,
-        }
+        return {"message": {"role": "assistant", "content": content}, "done": True}
+
+
+class OpenRouterClient(OpenAICompatibleClient):
+    """Backward-compatible OpenRouter client name."""
+
+    def __init__(self, api_key: str | None = None, timeout: int = 60):
+        super().__init__("openrouter", api_key=api_key, timeout=timeout)
 
 
 def get_provider_name() -> str:
     name = os.environ.get("REACT_PROVIDER", "ollama").strip().lower()
-    if name not in {"ollama", "openrouter"}:
-        raise RuntimeError(
-            f"Unsupported REACT_PROVIDER '{name}'. Choose 'ollama' or 'openrouter'."
-        )
+    if name not in {"ollama", *PROVIDER_CATALOG.keys()}:
+        options = ", ".join(["ollama", *PROVIDER_CATALOG.keys()])
+        raise RuntimeError(f"Unsupported REACT_PROVIDER '{name}'. Choose one of: {options}")
     return name
 
 
 def get_client(provider: str | None = None):
-    """Return a client for the selected provider."""
+    """Return a client for the selected local or hosted provider."""
     selected = (provider or get_provider_name()).strip().lower()
-    if selected == "openrouter":
-        return OpenRouterClient()
     if selected == "ollama":
         return ollama.Client()
-    raise RuntimeError(f"Unsupported provider '{selected}'. Choose ollama or openrouter.")
+    if selected in PROVIDER_CATALOG:
+        return OpenRouterClient() if selected == "openrouter" else OpenAICompatibleClient(selected)
+    raise RuntimeError(f"Unsupported provider '{selected}'.")
