@@ -4,13 +4,17 @@ A phone-friendly AI coding agent with a local Ollama option and OpenRouter BYOK 
 
 It can read files, search code, write or edit files (with confirmation), run shell commands, and automatically try to fix failures.
 
-## Install
+## Install and run
 
-```bash
-pip install -r requirements.txt
+Requires Python 3.10+ and an interactive terminal. From the repository root, the recommended one-command bootstrap is:
+
+```sh
+sh scripts/react.sh
 ```
 
-Requires Python 3.10+. Choose a provider: Ollama for a reachable local server, or OpenRouter BYOK for cloud models without downloading model weights.
+It creates a project-local `.venv`, installs the base package/dependencies when needed, and starts the full-screen TUI. Use `sh scripts/react.sh --classic` for the classic REPL. The bootstrap is designed for POSIX terminals, including compatible Android coding-app terminals; it cannot supply Python/venv features that the host terminal does not provide. See [Portable terminals and troubleshooting](docs/PORTABLE_TERMINALS_AND_FAILURES.md) for setup, failure fixes, and platform limits.
+
+The first run needs internet access for package installation. Then choose a provider in `/connect`. Hosted APIs require your own valid key and may require credits. Ollama requires a separately installed and running Ollama server.
 
 ## Provider setup
 
@@ -35,7 +39,7 @@ Set `REACT_PROVIDER` to the provider ID and optionally set `REACT_MODEL` to that
 
 In the full-screen TUI, `/connect` opens a provider setup wizard. Choose a provider, enter its key in a masked field, optionally override the model, and use **Test & Connect** to verify a real response. Custom OpenAI-compatible endpoints can specify a base URL. Keys are held in process memory only and are not written to disk; restarting ReAct requires reconnecting. The official key-page URL is shown in the wizard. Never paste API keys into chat, source code, screenshots, or commits. Connection tests send a small prompt to the selected provider and may incur usage charges.
 
-### OpenRouter BYOK (works from Termux without a local model)
+### OpenRouter BYOK (works from compatible terminals without a local model)
 
 1. Create an API key in your OpenRouter account: https://openrouter.ai/keys
 2. In Termux, set the key for the current shell session (replace the placeholder locally; never share it or commit it):
