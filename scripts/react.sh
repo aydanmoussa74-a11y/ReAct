@@ -33,7 +33,8 @@ if ! .venv/bin/python -c 'import typer, rich' >/dev/null 2>&1; then
   .venv/bin/python -m pip install -e .
 fi
 if [ "${1-}" = "--classic" ]; then
+  # The default branch currently provides the classic REPL; the TUI flag is
+  # available on the fullscreen-tui feature branch after its merge.
   shift
-  exec .venv/bin/react --classic "$@"
 fi
 exec .venv/bin/react "$@"
