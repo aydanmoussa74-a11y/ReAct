@@ -7,6 +7,7 @@ AI turn ran before the agent event bridge is implemented.
 from __future__ import annotations
 
 from pathlib import Path
+from functools import partial
 import threading
 
 from rich.text import Text
@@ -253,7 +254,7 @@ class ReActTUI(App):
         self.last_error = None
         self.query_one("#connection", Static).update("● WORKING")
         self.query_one("#prompt-label", Static).update("AGENT WORKING")
-        self.run_worker(self._agent_turn, prompt, thread=True, exclusive=True, name="react-agent-turn")
+        self.run_worker(partial(self._agent_turn, prompt), name="react-agent-turn", thread=True, exclusive=True)
 
     def _agent_turn(self, prompt: str) -> None:
         try:
